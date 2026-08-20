@@ -1,15 +1,35 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ParafraseAI · API Serverless (Vercel)
+//  ParafraseAI · API Serverless (Vercel) — proyecto SEPARADO del frontend
 //  Endpoint: /api/paraphrase
 //
-//  Cambios clave:
-//  · GET de diagnóstico: abre /api/paraphrase en el navegador para verificar
-//    que la API está desplegada y que GROQ_API_KEY está configurada.
-//  · El prompt se construye AQUÍ (el cliente solo envía texto + opciones).
-//  · Rate limit por IP para proteger tu cuota de Groq.
-//  · Modelo Mixtral eliminado (Groq lo deprecó en marzo de 2025).
-//  · Errores genéricos: no se filtran detalles internos de Groq al cliente.
+//  NUEVO: soporte CORS completo, ya que el frontend vive en otro dominio.
+//  · Maneja el preflight OPTIONS
+//  · Lista blanca de orígenes (ALLOWED_ORIGINS)
+//  · GET de diagnóstico para verificar despliegue y clave
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── CORS: dominios autorizados a usar esta API ──────────────────────────────
+// ⚠️ IMPORTANTE: añade aquí la URL de tu frontend (sin barra final).
+// Ejemplos:
+//   'https://parafraseai.vercel.app'
+//   'http://localhost:5500'   (Live Server, para pruebas locales)
+// Si dejas '*' cualquier web podrá usar tu API (no recomendado en producción).
+const ALLOWED_ORIGINS = [
+  '*', // ← cámbialo por la URL de tu frontend cuando esté desplegado
+];
+
+function applyCors(req, res) {
+  const origin = req.headers.origin || '';
+  const allowAll = ALLOWED_ORIGINS.includes('*');
+
+  if (allowAll || ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.setHeader('Vary', 'Origin');
+  }
+}
 
 // ─── Rate limit en memoria (ventana deslizante) ───────────────────────────────
 const RATE_WINDOW_MS = 60 * 1000; // 1 minuto
@@ -30,7 +50,6 @@ function checkRateLimit(ip) {
   hits.push(now);
   rateHits.set(ip, hits);
 
-  // Limpieza básica para no crecer sin límite
   if (rateHits.size > 10000) rateHits.clear();
   return { limited: false };
 }
@@ -83,11 +102,16 @@ ${text}`;
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  // ── NUEVO: Endpoint de diagnóstico (GET) ────────────────────────────────
-  // Abre https://tu-sitio.vercel.app/api/paraphrase en el navegador.
-  // Si ves {"status":"ok","keyConfigured":true} la API funciona.
-  // Si "keyConfigured" es false → falta GROQ_API_KEY en Vercel.
-  // Si la página da 404 → el archivo api/paraphrase.js no está subido.
+  // Aplicar headers CORS a TODAS las respuestas
+  applyCors(req, res);
+
+  // Preflight CORS: el navegador envía OPTIONS antes del POST con JSON
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  // ── Endpoint de diagnóstico (GET) ────────────────────────────────────────
+  // Abre la URL de esta API en el navegador para comprobar el despliegue.
   if (req.method === 'GET') {
     return res.status(200).json({
       status: 'ok',
@@ -98,7 +122,7 @@ export default async function handler(req, res) {
 
   // Solo POST para parafrasear
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['GET', 'POST']);
+    res.setHeader('Allow', ['GET', 'POST', 'OPTIONS']);
     return res.status(405).json({ error: 'Método no permitido. Usa GET o POST.' });
   }
 
@@ -123,7 +147,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres).' });
   }
 
-  // ── Validar API Key (mensaje más claro para diagnosticar) ──────────────
+  // ── Validar API Key ─────────────────────────────────────────────────────
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
     console.error('[ParafraseAI] Falta variable de entorno GROQ_API_KEY');
@@ -132,7 +156,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── Parámetros validados con whitelist (Mixtral eliminado) ─────────────
+  // ── Parámetros validados con whitelist (Mixtral eliminado: Groq lo retiró) ──
   const ALLOWED_MODELS = [
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
@@ -154,7 +178,6 @@ export default async function handler(req, res) {
 
   // ── Headers de seguridad ────────────────────────────────────────────────
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Cache-Control', 'no-store');
 
   try {
@@ -183,10 +206,8 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      // Detalle completo solo en logs del servidor, nunca al cliente
       console.error('[ParafraseAI] Error de Groq:', JSON.stringify(errorData));
 
-      // Propaga el 429 de Groq con retryAfter para que el frontend haga backoff
       if (response.status === 429) {
         return res.status(429).json({
           error: 'La API de IA está saturada. Reintentando en unos segundos...',
@@ -194,14 +215,12 @@ export default async function handler(req, res) {
         });
       }
 
-      // 401/403 = clave inválida o expirada
       if (response.status === 401 || response.status === 403) {
         return res.status(502).json({
           error: 'La clave GROQ_API_KEY parece inválida o expirada. Genera una nueva en console.groq.com.'
         });
       }
 
-      // Mensaje genérico para el resto de errores upstream
       return res.status(502).json({ error: 'Error del proveedor de IA. Inténtalo de nuevo.' });
     }
 
@@ -213,7 +232,6 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: 'La API devolvió una respuesta vacía.' });
     }
 
-    // ── Respuesta exitosa (avisa si la salida fue truncada por max_tokens) ──
     return res.status(200).json({
       paraphrased: paraphrased.trim(),
       model: modelName,

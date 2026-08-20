@@ -1,10 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ParafraseAI · Frontend
 //  by Jaime Wong Franco
-//  Nuevo: diagnóstico del endpoint antes de empezar + muestra el error exacto
-//  del primer segmento fallido para saber qué está pasando.
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  ⚙️ CONFIGURACIÓN OBLIGATORIA                                             ║
+// ║  La API está en un proyecto de Vercel SEPARADO. Pon aquí su URL completa. ║
+// ║  Ejemplo: 'https://mi-api-parafraseo.vercel.app/api/paraphrase'           ║
+// ║  (La encuentras en Vercel → tu proyecto de API → "Domains")               ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+const API_ENDPOINT = 'https://TU-PROYECTO-API.vercel.app/api/paraphrase';
 
 // ─── Carga diferida de librerías ──────────────────────────────────────────────
 const LIBS = {
@@ -469,39 +475,43 @@ async function fetchWithTimeout(url, options, timeoutMs, externalSignal) {
   }
 }
 
-// ─── NUEVO: Verificación rápida del endpoint antes de procesar ───────────────
-// Evita que el usuario espere a que fallen TODOS los segmentos para saber
-// que el problema es de despliegue/configuración.
+// ─── Verificación rápida de la API externa antes de procesar ─────────────────
 async function verifyEndpoint() {
+  // Aviso si el usuario olvidó configurar la URL
+  if (API_ENDPOINT.includes('TU-PROYECTO-API')) {
+    showErr('Configura la constante API_ENDPOINT al inicio de script.js con la URL de tu proyecto de API en Vercel (ej: https://mi-api.vercel.app/api/paraphrase).');
+    return false;
+  }
+
   try {
-    const check = await fetch('/api/paraphrase', { method: 'GET' });
+    const check = await fetch(API_ENDPOINT, { method: 'GET' });
 
     if (check.status === 404) {
-      showErr('El endpoint /api/paraphrase no existe. Verifica que el archivo api/paraphrase.js esté en tu repositorio y que estés probando en Vercel (o con "vercel dev").');
+      showErr(`La URL de la API responde 404. Revisa que API_ENDPOINT sea correcta: actualmente apunta a ${API_ENDPOINT}`);
       return false;
     }
 
     const info = await check.json().catch(() => null);
 
     if (info && info.keyConfigured === false) {
-      showErr('El servidor no tiene configurada la variable GROQ_API_KEY. Añádela en Vercel → Settings → Environment Variables y haz redeploy.');
+      showErr('La API responde, pero le falta la variable GROQ_API_KEY. Configúrala en el proyecto de Vercel de la API → Settings → Environment Variables → Redeploy.');
       return false;
     }
     return true;
   } catch {
-    showErr('No se pudo contactar con el servidor (/api/paraphrase). Si estás probando en local, usa "vercel dev"; el endpoint no funciona con servidores estáticos.');
+    showErr('No se pudo contactar con la API (fallo de red o de CORS). Verifica que API_ENDPOINT sea correcta y que paraphrase.js tenga los headers CORS y tu dominio en ALLOWED_ORIGINS.');
     return false;
   }
 }
 
-// ─── Petición por segmento (con reintentos de red y backoff en 429) ──────────
+// ─── Petición por segmento (reintentos de red + backoff en 429) ──────────────
 async function paraphraseChunk(chunkText, opts, signal) {
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response;
 
     try {
-      response = await fetchWithTimeout('/api/paraphrase', {
+      response = await fetchWithTimeout(API_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: chunkText, ...opts })
@@ -509,13 +519,13 @@ async function paraphraseChunk(chunkText, opts, signal) {
     } catch (networkErr) {
       // Si fue el usuario quien canceló, propagar directamente
       if (signal && signal.aborted) throw networkErr;
-      // Error de red / endpoint caído: reintentar
+      // Error de red / CORS: reintentar
       if (attempt < maxRetries) {
         logLine.innerText = `Reintentando conexión... (${attempt + 1}/${maxRetries})`;
         await sleep(1200 * (attempt + 1));
         continue;
       }
-      throw new Error('No se pudo conectar con /api/paraphrase. Verifica el despliegue en Vercel.');
+      throw new Error('No se pudo conectar con la API. Revisa API_ENDPOINT y los headers CORS del servidor.');
     }
 
     // Límite de peticiones (429): esperar y reintentar
@@ -562,7 +572,7 @@ async function startParaphrase() {
     if (!source) { showErr('Pega un texto primero.'); return; }
   }
 
-  // NUEVO: diagnóstico rápido del endpoint ANTES de procesar nada
+  // Diagnóstico rápido de la API externa ANTES de procesar nada
   const endpointOk = await verifyEndpoint();
   if (!endpointOk) return;
 
@@ -597,7 +607,7 @@ async function startParaphrase() {
   const results = [];
   let errorCount     = 0;
   let truncatedCount = 0;
-  let firstError     = '';   // NUEVO: guarda el primer error para mostrarlo
+  let firstError     = '';
   const startTime    = Date.now();
 
   for (let i = 0; i < chunks.length; i++) {
