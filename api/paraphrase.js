@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ParafraseAI · API Serverless (Vercel)
-//  Endpoint: /api/paraphrase
+//  ParafraseAI · API Serverless (Vercel) · Endpoint: /api/paraphrase
+//  Modelos actualizados 2026: Llama 3.3 70B, Llama 3.1 8B, Gemma 2 9B
+//  (Mixtral 8x7B fue retirado por Groq en marzo de 2025)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TONES = {
@@ -11,9 +12,9 @@ const TONES = {
 };
 
 const INTENSITY_TEXT = {
-  1: 'cambios mínimos (solo sinónimos puntuales, conserva estructura de oraciones casi intacta)',
-  2: 'cambios medios (reestructura algunas oraciones, varía vocabulario manteniendo fluidez)',
-  3: 'reescritura profunda (transforma completamente la redacción manteniendo el significado exacto)'
+  1: 'cambios mínimos (solo sinónimos puntuales)',
+  2: 'cambios medios (reestructura algunas oraciones)',
+  3: 'reescritura profunda (transforma la redacción manteniendo el significado)'
 };
 
 const PRESERVE_RULES = {
@@ -27,34 +28,28 @@ function buildPrompt(text, tone, intensity, preserve) {
   for (const key of preserve) {
     if (PRESERVE_RULES[key]) preserveRules += PRESERVE_RULES[key];
   }
-
   return `Eres un parafraseador profesional en español con amplia experiencia en reescritura de textos. Tu tarea es reescribir ÚNICAMENTE los párrafos de contenido, respetando siempre los títulos.
 
 REGLAS OBLIGATORIAS:
 1. Tono: ${TONES[tone] || TONES.natural}.
 2. Intensidad: ${INTENSITY_TEXT[intensity] || INTENSITY_TEXT[2]}.
-${preserveRules}3. NO añadas comentarios, explicaciones, introducciones ni prefijos como "Aquí el texto:" o "Paráfrasis:".
-4. NO uses frases como "En resumen", "Para concluir", "En síntesis" al final.
-5. Devuelve SOLO el texto reescrito, manteniendo la misma estructura de líneas y párrafos.
-6. Los títulos y encabezados deben aparecer idénticos al original.
-7. Mantén la coherencia y cohesión entre párrafos.
+${preserveRules}3. NO añadas comentarios, explicaciones ni prefijos.
+4. NO uses frases como "En resumen", "Para concluir" al final.
+5. Devuelve SOLO el texto reescrito, manteniendo la misma estructura.
+6. Los títulos deben aparecer idénticos al original.
 
 TEXTO A PARAFRASEAR:
 ${text}`;
 }
 
 export default async function handler(req, res) {
-  // CORS (por si acaso, aunque al estar en el mismo dominio no debería ser necesario)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(204).end();
 
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Método no permitido. Usa POST.' });
   }
 
@@ -64,22 +59,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Falta el texto o está vacío.' });
   }
   if (text.length > 11000) {
-    return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres).' });
+    return res.status(400).json({ error: 'Texto demasiado largo (máx. 11000 caracteres).' });
   }
 
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
-    console.error('[ParafraseAI] Falta variable de entorno GROQ_API_KEY');
+    console.error('[ParafraseAI] Falta GROQ_API_KEY');
     return res.status(500).json({
-      error: 'Falta la variable GROQ_API_KEY. Configúrala en Vercel → Settings → Environment Variables y haz Redeploy.'
+      error: 'Falta GROQ_API_KEY. Configúrala en Vercel → Settings → Environment Variables y haz Redeploy.'
     });
   }
 
-  // Modelos vigentes (Mixtral fue retirado por Groq en 2025)
+  // ── MODELOS VÁLIDOS EN GROQ (2026) ──────────────────────────────────────
+  // Mixtral 8x7B fue RETIRADO por Groq, ya no funciona.
   const ALLOWED_MODELS = [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
-    'gemma2-9b-it'
+    'llama-3.3-70b-versatile',   // mejor calidad
+    'llama-3.1-8b-instant',      // más rápido
+    'gemma2-9b-it'               // equilibrado
   ];
   const modelName = ALLOWED_MODELS.includes(model) ? model : 'llama-3.3-70b-versatile';
 
@@ -92,7 +88,6 @@ export default async function handler(req, res) {
     ? temperature
     : [0.3, 0.7, 1.0][safeIntensity - 1];
 
-  const MAX_TOKENS = 4096;
   const prompt = buildPrompt(text.trim(), safeTone, safeIntensity, safePreserve);
 
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -108,13 +103,13 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'User-Agent': 'ParafraseAI/2.0'
+        'User-Agent': 'ParafraseAI/3.0'
       },
       body: JSON.stringify({
         model: modelName,
         messages: [{ role: 'user', content: prompt }],
         temperature: tempValue,
-        max_tokens: MAX_TOKENS,
+        max_tokens: 4096,
         top_p: 0.9,
         stream: false
       })
@@ -124,22 +119,23 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error('[ParafraseAI] Error de Groq:', JSON.stringify(errorData));
+      console.error('[ParafraseAI] Error Groq:', JSON.stringify(errorData));
 
       if (response.status === 429) {
-        return res.status(429).json({
-          error: 'La API de IA está saturada. Espera unos segundos.',
-          retryAfter: 8
-        });
+        return res.status(429).json({ error: 'API saturada. Espera unos segundos.', retryAfter: 8 });
       }
-
       if (response.status === 401 || response.status === 403) {
-        return res.status(502).json({
-          error: 'La clave GROQ_API_KEY es inválida o expiró. Genera una nueva en console.groq.com.'
-        });
+        return res.status(502).json({ error: 'Clave GROQ inválida o expirada. Genera una nueva en console.groq.com.' });
       }
-
-      return res.status(502).json({ error: 'Error del proveedor de IA. Inténtalo de nuevo.' });
+      if (response.status === 400) {
+        const msg = errorData?.error?.message || '';
+        // Si menciona el modelo, es que el modelo no existe
+        if (msg.toLowerCase().includes('model')) {
+          return res.status(400).json({ error: `Modelo no disponible en Groq: ${modelName}. Usa llama-3.3-70b-versatile.` });
+        }
+        return res.status(400).json({ error: msg || 'Petición inválida a Groq.' });
+      }
+      return res.status(502).json({ error: 'Error del proveedor de IA.' });
     }
 
     const data = await response.json();
@@ -166,6 +162,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const config = {
-  maxDuration: 60
-};
+export const config = { maxDuration: 60 };

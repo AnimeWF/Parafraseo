@@ -4,9 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ParafraseAI · Parafraseador Inteligente</title>
-  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos, números y estructura.">
+  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos y estructura.">
   <meta name="author" content="Jaime Wong Franco">
-  <meta name="theme-color" content="#0d0f14">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8D%EF%B8%8F%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-400.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-600.css">
@@ -23,12 +22,10 @@
 
     <section class="card">
       <div class="card-title">📄 Documento</div>
-
       <div class="mode-tabs" role="tablist">
         <button class="mode-tab active" id="tab-file" type="button">📁 Subir archivo</button>
         <button class="mode-tab" id="tab-text" type="button">✏️ Pegar texto</button>
       </div>
-
       <div id="file-mode">
         <div class="drop-zone" id="drop-zone">
           <input type="file" id="file-input" accept=".pdf,.docx,.txt">
@@ -41,23 +38,20 @@
           </div>
           <div>Arrastra un archivo aquí o haz clic para seleccionar · PDF, DOCX, TXT · máx. 5 MB</div>
         </div>
-
         <div class="file-loaded" id="file-loaded" style="display:none">
           <span id="file-icon">📄</span>
           <div class="file-info">
             <span id="file-name"></span>
             <span id="file-meta" class="file-meta"></span>
           </div>
-          <button id="clear-file-btn" type="button" aria-label="Quitar archivo">✖</button>
+          <button id="clear-file-btn" type="button">✖</button>
         </div>
       </div>
-
       <textarea id="text-input" class="text-input-area" placeholder="Pega aquí tu texto..." style="display:none"></textarea>
     </section>
 
     <section class="card">
       <div class="card-title">⚙️ Configuración</div>
-
       <div class="options-grid">
         <div class="opt-group">
           <label for="tone">Tono de escritura</label>
@@ -68,7 +62,6 @@
             <option value="conversacional">💬 Conversacional</option>
           </select>
         </div>
-
         <div class="opt-group">
           <label for="model-select">Modelo de IA</label>
           <select id="model-select">
@@ -97,7 +90,6 @@
       </div>
 
       <div id="err-msg" class="err-msg" role="alert"></div>
-
       <button class="run-btn" id="run-btn" type="button">▶ Iniciar parafraseado</button>
     </section>
 
@@ -121,36 +113,20 @@
           <button class="icon-btn" id="reset-btn" type="button">🔄 Nuevo</button>
         </div>
       </div>
-
       <div class="stats-row">
-        <div class="stat-card">
-          <span class="stat-val" id="stat-orig">—</span>
-          <span class="stat-label">Palabras orig.</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-new">—</span>
-          <span class="stat-label">Palabras nuevas</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-chunks">—</span>
-          <span class="stat-label">Segmentos</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-similarity">—</span>
-          <span class="stat-label">Similitud</span>
-        </div>
+        <div class="stat-card"><span class="stat-val" id="stat-orig">—</span><span class="stat-label">Palabras orig.</span></div>
+        <div class="stat-card"><span class="stat-val" id="stat-new">—</span><span class="stat-label">Palabras nuevas</span></div>
+        <div class="stat-card"><span class="stat-val" id="stat-chunks">—</span><span class="stat-label">Segmentos</span></div>
+        <div class="stat-card"><span class="stat-val" id="stat-similarity">—</span><span class="stat-label">Similitud</span></div>
       </div>
-
-      <textarea id="output-textarea" class="output-textarea" aria-label="Texto parafraseado"></textarea>
+      <textarea id="output-textarea" class="output-textarea"></textarea>
     </section>
 
     <footer class="footer">
       ✨ Hecho por <strong>Jaime Wong Franco</strong> ·
-      <a href="https://github.com/jswongfranco/Parafraseo" target="_blank" rel="noopener">GitHub</a> ·
-      ParafraseAI ✨
+      <a href="https://github.com/jswongfranco/Parafraseo" target="_blank">GitHub</a> · ParafraseAI ✨
     </footer>
   </main>
-
   <script src="script.js"></script>
 </body>
 </html>
