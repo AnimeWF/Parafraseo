@@ -1,65 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ParafraseAI · API Serverless (Vercel) — proyecto SEPARADO del frontend
+//  ParafraseAI · API Serverless (Vercel)
 //  Endpoint: /api/paraphrase
-//
-//  NUEVO: soporte CORS completo, ya que el frontend vive en otro dominio.
-//  · Maneja el preflight OPTIONS
-//  · Lista blanca de orígenes (ALLOWED_ORIGINS)
-//  · GET de diagnóstico para verificar despliegue y clave
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── CORS: dominios autorizados a usar esta API ──────────────────────────────
-// ⚠️ IMPORTANTE: añade aquí la URL de tu frontend (sin barra final).
-// Ejemplos:
-//   'https://parafraseai.vercel.app'
-//   'http://localhost:5500'   (Live Server, para pruebas locales)
-// Si dejas '*' cualquier web podrá usar tu API (no recomendado en producción).
-const ALLOWED_ORIGINS = [
-  '*', // ← cámbialo por la URL de tu frontend cuando esté desplegado
-];
-
-function applyCors(req, res) {
-  const origin = req.headers.origin || '';
-  const allowAll = ALLOWED_ORIGINS.includes('*');
-
-  if (allowAll || ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    res.setHeader('Vary', 'Origin');
-  }
-}
-
-// ─── Rate limit en memoria (ventana deslizante) ───────────────────────────────
-const RATE_WINDOW_MS = 60 * 1000; // 1 minuto
-const RATE_MAX_REQ   = 40;        // máx. peticiones por IP por minuto
-const rateHits = new Map();
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  let hits = rateHits.get(ip) || [];
-  hits = hits.filter(t => now - t < RATE_WINDOW_MS);
-
-  if (hits.length >= RATE_MAX_REQ) {
-    rateHits.set(ip, hits);
-    const retryAfter = Math.ceil((RATE_WINDOW_MS - (now - hits[0])) / 1000);
-    return { limited: true, retryAfter };
-  }
-
-  hits.push(now);
-  rateHits.set(ip, hits);
-
-  if (rateHits.size > 10000) rateHits.clear();
-  return { limited: false };
-}
-
-function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  return (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() || 'desconocida';
-}
-
-// ─── Construcción del prompt en el servidor (FIX de seguridad) ───────────────
 const TONES = {
   natural: 'natural y fluido, como lo escribiría una persona real',
   academico: 'académico y formal, apropiado para papers y ensayos universitarios',
@@ -100,44 +43,21 @@ TEXTO A PARAFRASEAR:
 ${text}`;
 }
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  // Aplicar headers CORS a TODAS las respuestas
-  applyCors(req, res);
+  // CORS (por si acaso, aunque al estar en el mismo dominio no debería ser necesario)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Preflight CORS: el navegador envía OPTIONS antes del POST con JSON
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  // ── Endpoint de diagnóstico (GET) ────────────────────────────────────────
-  // Abre la URL de esta API en el navegador para comprobar el despliegue.
-  if (req.method === 'GET') {
-    return res.status(200).json({
-      status: 'ok',
-      endpoint: '/api/paraphrase',
-      keyConfigured: Boolean(process.env.GROQ_API_KEY)
-    });
-  }
-
-  // Solo POST para parafrasear
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['GET', 'POST', 'OPTIONS']);
-    return res.status(405).json({ error: 'Método no permitido. Usa GET o POST.' });
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ error: 'Método no permitido. Usa POST.' });
   }
 
-  // Rate limit por IP
-  const ip = getClientIp(req);
-  const rate = checkRateLimit(ip);
-  if (rate.limited) {
-    res.setHeader('Retry-After', String(rate.retryAfter));
-    return res.status(429).json({
-      error: 'Has alcanzado el límite de peticiones por minuto. Espera unos segundos.',
-      retryAfter: rate.retryAfter
-    });
-  }
-
-  // ── Validar body (recibe texto + opciones, no un prompt libre) ──────────
   const { text, tone, intensity, preserve, model, temperature } = req.body || {};
 
   if (!text || typeof text !== 'string' || !text.trim()) {
@@ -147,16 +67,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres).' });
   }
 
-  // ── Validar API Key ─────────────────────────────────────────────────────
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
     console.error('[ParafraseAI] Falta variable de entorno GROQ_API_KEY');
     return res.status(500).json({
-      error: 'Falta la variable GROQ_API_KEY en el servidor. Configúrala en Vercel → Settings → Environment Variables y haz redeploy.'
+      error: 'Falta la variable GROQ_API_KEY. Configúrala en Vercel → Settings → Environment Variables y haz Redeploy.'
     });
   }
 
-  // ── Parámetros validados con whitelist (Mixtral eliminado: Groq lo retiró) ──
+  // Modelos vigentes (Mixtral fue retirado por Groq en 2025)
   const ALLOWED_MODELS = [
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
@@ -164,9 +83,9 @@ export default async function handler(req, res) {
   ];
   const modelName = ALLOWED_MODELS.includes(model) ? model : 'llama-3.3-70b-versatile';
 
-  const safeTone      = TONES[tone] ? tone : 'natural';
+  const safeTone = TONES[tone] ? tone : 'natural';
   const safeIntensity = [1, 2, 3].includes(Number(intensity)) ? Number(intensity) : 2;
-  const safePreserve  = Array.isArray(preserve)
+  const safePreserve = Array.isArray(preserve)
     ? preserve.filter(k => PRESERVE_RULES[k])
     : ['titles', 'numbers'];
   const tempValue = typeof temperature === 'number' && temperature >= 0 && temperature <= 1
@@ -176,7 +95,6 @@ export default async function handler(req, res) {
   const MAX_TOKENS = 4096;
   const prompt = buildPrompt(text.trim(), safeTone, safeIntensity, safePreserve);
 
-  // ── Headers de seguridad ────────────────────────────────────────────────
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
 
@@ -210,14 +128,14 @@ export default async function handler(req, res) {
 
       if (response.status === 429) {
         return res.status(429).json({
-          error: 'La API de IA está saturada. Reintentando en unos segundos...',
+          error: 'La API de IA está saturada. Espera unos segundos.',
           retryAfter: 8
         });
       }
 
       if (response.status === 401 || response.status === 403) {
         return res.status(502).json({
-          error: 'La clave GROQ_API_KEY parece inválida o expirada. Genera una nueva en console.groq.com.'
+          error: 'La clave GROQ_API_KEY es inválida o expiró. Genera una nueva en console.groq.com.'
         });
       }
 
@@ -242,13 +160,12 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('[ParafraseAI] Error interno:', error.message);
     if (error.name === 'AbortError') {
-      return res.status(504).json({ error: 'La solicitud tardó demasiado. Intenta con un texto más corto.' });
+      return res.status(504).json({ error: 'La solicitud tardó demasiado.' });
     }
     return res.status(500).json({ error: 'Error interno del servidor.' });
   }
 }
 
-// Duración máxima de la función (Hobby permite hasta 60s)--
 export const config = {
   maxDuration: 60
 };
