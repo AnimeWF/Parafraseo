@@ -3,23 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- SEO -->
   <title>ParafraseAI · Parafraseador Inteligente</title>
-  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos, números y estructura. Gratis y sin registro.">
+  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos, números y estructura.">
   <meta name="author" content="Jaime Wong Franco">
   <meta name="theme-color" content="#0d0f14">
-
-  <!-- Open Graph / redes sociales -->
   <meta property="og:title" content="ParafraseAI · Parafraseador Inteligente">
   <meta property="og:description" content="Reescribe tus documentos con IA conservando su estructura.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://github.com/jswongfranco/Parafraseo">
-
-  <!-- Favicon SVG inline (no necesita archivo externo) -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8D%EF%B8%8F%3C/text%3E%3C/svg%3E">
 
-  <!-- Fuentes autoalojadas vía Fontsource (reemplazan a Google Fonts) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-400.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-500.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-600.css">
@@ -31,13 +23,11 @@
 <body>
   <main class="app">
 
-    <!-- ═══════════ Header ═══════════ -->
     <header class="header">
       <h1>✍️ ParafraseAI</h1>
       <p>Parafraseador inteligente con preservación de estructura</p>
     </header>
 
-    <!-- ═══════════ Entrada de documento ═══════════ -->
     <section class="card">
       <div class="card-title">📄 Documento</div>
 
@@ -77,7 +67,6 @@
       </div>
     </section>
 
-    <!-- ═══════════ Configuración ═══════════ -->
     <section class="card">
       <div class="card-title">⚙️ Configuración</div>
 
@@ -125,7 +114,6 @@
       <p class="kbd-hint">Atajos: <kbd>Ctrl</kbd>+<kbd>Enter</kbd> parafrasear · <kbd>Esc</kbd> cancelar · <kbd>Ctrl</kbd>+<kbd>C</kbd> copiar resultado</p>
     </section>
 
-    <!-- ═══════════ Progreso ═══════════ -->
     <section class="card progress-section" id="progress-section">
       <div class="progress-head">
         <div class="card-title card-title-inline">⏳ Procesando...</div>
@@ -139,7 +127,6 @@
       <div class="log-line" id="log-line" aria-live="polite"></div>
     </section>
 
-    <!-- ═══════════ Resultado ═══════════ -->
     <section class="card output-section" id="output-section">
       <div class="output-header">
         <div class="card-title card-title-inline">📝 Resultado</div>
@@ -183,7 +170,6 @@
       </div>
     </section>
 
-    <!-- ═══════════ Historial ═══════════ -->
     <section class="card history-section" id="history-section" hidden>
       <div class="output-header">
         <div class="card-title card-title-inline">🕘 Historial</div>
@@ -192,7 +178,6 @@
       <div id="history-list" class="history-list"></div>
     </section>
 
-    <!-- ═══════════ Footer ═══════════ -->
     <footer class="footer">
       ✨ Hecho por <strong>Jaime Wong Franco</strong> ·
       <a href="https://github.com/jswongfranco/Parafraseo" target="_blank" rel="noopener">GitHub</a> ·
@@ -200,10 +185,8 @@
     </footer>
   </main>
 
-  <!-- Contenedor de notificaciones toast -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- pdf.js, mammoth y docx se cargan bajo demanda desde script.js -->
   <script src="script.js"></script>
 </body>
 </html>
