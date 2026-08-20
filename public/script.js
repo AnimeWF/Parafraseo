@@ -10,7 +10,7 @@
 // ║  Ejemplo: 'https://mi-api-parafraseo.vercel.app/api/paraphrase'           ║
 // ║  (La encuentras en Vercel → tu proyecto de API → "Domains")               ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-const API_ENDPOINT = 'https://parafraseo-iota.vercel.app/;
+const API_ENDPOINT = 'https://parafraseo-iota.vercel.app/';
 
 // ─── Carga diferida de librerías ──────────────────────────────────────────────
 const LIBS = {
