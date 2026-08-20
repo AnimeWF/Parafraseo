@@ -3,15 +3,15 @@
 //  Endpoint: /api/paraphrase
 //
 //  Cambios clave:
-//  · El prompt se construye AQUÍ (el cliente ya no puede usar tu clave para
-//    enviar prompts arbitrarios).
+//  · GET de diagnóstico: abre /api/paraphrase en el navegador para verificar
+//    que la API está desplegada y que GROQ_API_KEY está configurada.
+//  · El prompt se construye AQUÍ (el cliente solo envía texto + opciones).
 //  · Rate limit por IP para proteger tu cuota de Groq.
 //  · Modelo Mixtral eliminado (Groq lo deprecó en marzo de 2025).
 //  · Errores genéricos: no se filtran detalles internos de Groq al cliente.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── Rate limit en memoria (ventana deslizante) ───────────────────────────────
-// Nota: en serverless la memoria es efímera; sirve como primera barrera.
 const RATE_WINDOW_MS = 60 * 1000; // 1 minuto
 const RATE_MAX_REQ   = 40;        // máx. peticiones por IP por minuto
 const rateHits = new Map();
@@ -83,10 +83,23 @@ ${text}`;
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  // Solo POST
+  // ── NUEVO: Endpoint de diagnóstico (GET) ────────────────────────────────
+  // Abre https://tu-sitio.vercel.app/api/paraphrase en el navegador.
+  // Si ves {"status":"ok","keyConfigured":true} la API funciona.
+  // Si "keyConfigured" es false → falta GROQ_API_KEY en Vercel.
+  // Si la página da 404 → el archivo api/paraphrase.js no está subido.
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      status: 'ok',
+      endpoint: '/api/paraphrase',
+      keyConfigured: Boolean(process.env.GROQ_API_KEY)
+    });
+  }
+
+  // Solo POST para parafrasear
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Método no permitido. Usa POST.' });
+    res.setHeader('Allow', ['GET', 'POST']);
+    return res.status(405).json({ error: 'Método no permitido. Usa GET o POST.' });
   }
 
   // Rate limit por IP
@@ -100,7 +113,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── Validar body (ahora recibe texto + opciones, no un prompt libre) ────
+  // ── Validar body (recibe texto + opciones, no un prompt libre) ──────────
   const { text, tone, intensity, preserve, model, temperature } = req.body || {};
 
   if (!text || typeof text !== 'string' || !text.trim()) {
@@ -110,14 +123,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres).' });
   }
 
-  // ── Validar API Key ─────────────────────────────────────────────────────
+  // ── Validar API Key (mensaje más claro para diagnosticar) ──────────────
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
     console.error('[ParafraseAI] Falta variable de entorno GROQ_API_KEY');
-    return res.status(500).json({ error: 'Configuración del servidor incompleta.' });
+    return res.status(500).json({
+      error: 'Falta la variable GROQ_API_KEY en el servidor. Configúrala en Vercel → Settings → Environment Variables y haz redeploy.'
+    });
   }
 
-  // ── Parámetros validados con whitelist (FIX: Mixtral eliminado) ────────
+  // ── Parámetros validados con whitelist (Mixtral eliminado) ─────────────
   const ALLOWED_MODELS = [
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
@@ -179,6 +194,13 @@ export default async function handler(req, res) {
         });
       }
 
+      // 401/403 = clave inválida o expirada
+      if (response.status === 401 || response.status === 403) {
+        return res.status(502).json({
+          error: 'La clave GROQ_API_KEY parece inválida o expirada. Genera una nueva en console.groq.com.'
+        });
+      }
+
       // Mensaje genérico para el resto de errores upstream
       return res.status(502).json({ error: 'Error del proveedor de IA. Inténtalo de nuevo.' });
     }
@@ -204,7 +226,6 @@ export default async function handler(req, res) {
     if (error.name === 'AbortError') {
       return res.status(504).json({ error: 'La solicitud tardó demasiado. Intenta con un texto más corto.' });
     }
-    // FIX: no exponer error.message interno al cliente
     return res.status(500).json({ error: 'Error interno del servidor.' });
   }
 }

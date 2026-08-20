@@ -1,10 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ParafraseAI · Frontend
 //  by Jaime Wong Franco
+//  Nuevo: diagnóstico del endpoint antes de empezar + muestra el error exacto
+//  del primer segmento fallido para saber qué está pasando.
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
 
-// ─── Carga diferida de librerías (FIX: ya no se cargan todas al inicio) ─────
+// ─── Carga diferida de librerías ──────────────────────────────────────────────
 const LIBS = {
   pdfjs: {
     url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
@@ -30,7 +32,6 @@ function loadLib(name) {
     const script = document.createElement('script');
     script.src = LIBS[name].url;
     script.onload = () => {
-      // Configura el worker de pdf.js justo después de cargarlo
       if (name === 'pdfjs' && window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfjs.worker;
       }
@@ -93,8 +94,8 @@ let extractedText     = '';
 let currentMode       = 'file';
 let originalFilename  = '';
 let originalFileExt   = '';
-let lastOriginalText  = '';   // para el modo comparación
-let currentAbort      = null; // AbortController del proceso en curso
+let lastOriginalText  = '';
+let currentAbort      = null;
 let cancelRequested   = false;
 
 const MAX_FILE_SIZE_MB = 5;
@@ -137,7 +138,6 @@ function init() {
   clearHistoryBtn.addEventListener('click', clearHistory);
   intensitySlider.addEventListener('input', (e) => updateIntensity(e.target.value));
 
-  // Toggle de chips de preservar
   document.querySelectorAll('#preserve-chips .toggle-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       chip.classList.toggle('active');
@@ -145,11 +145,9 @@ function init() {
     });
   });
 
-  // Auto-grow + contador del textarea de entrada
   textInput.addEventListener('input', () => { autoGrow(); updateTextCounter(); });
   textInput.addEventListener('paste', () => setTimeout(() => { autoGrow(); updateTextCounter(); }, 0));
 
-  // Drag & drop
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     dropZone.addEventListener(eventName, preventDefaults, false);
     document.body.addEventListener(eventName, preventDefaults, false);
@@ -166,14 +164,12 @@ function init() {
     if (files[0]) handleFile(files[0]);
   });
 
-  // Atajos de teclado
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 'Enter' && !runBtn.disabled) {
         e.preventDefault();
         startParaphrase();
       }
-      // FIX: Ctrl+C copia todo solo si NO hay texto seleccionado
       if (e.key === 'c' && document.activeElement === outputTextarea) {
         const hasSelection = outputTextarea.selectionStart !== outputTextarea.selectionEnd;
         if (!hasSelection) {
@@ -182,7 +178,6 @@ function init() {
         }
       }
     }
-    // Esc cancela el proceso en curso
     if (e.key === 'Escape' && !runBtn.disabled) {
       cancelParaphrase();
     }
@@ -197,7 +192,7 @@ function preventDefaults(e) {
   e.stopPropagation();
 }
 
-// ─── Toasts (reemplazan el uso de err-msg para mensajes de éxito) ────────────
+// ─── Toasts ───────────────────────────────────────────────────────────────────
 function showToast(msg, type = 'success') {
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
@@ -209,7 +204,7 @@ function showToast(msg, type = 'success') {
   }, 2600);
 }
 
-// ─── Mensajes de error (solo errores) ─────────────────────────────────────────
+// ─── Mensajes de error ────────────────────────────────────────────────────────
 let errTimer = null;
 function showErr(msg) {
   errMsg.innerText = msg;
@@ -224,14 +219,14 @@ function autoGrow() {
   textInput.style.height = newHeight + 'px';
 }
 
-// ─── Contador de palabras/caracteres en modo texto (nuevo) ───────────────────
+// ─── Contador de palabras/caracteres ──────────────────────────────────────────
 function updateTextCounter() {
   const text = textInput.value;
   const words = countWords(text);
   textCounter.innerText = `${words.toLocaleString('es')} palabras · ${text.length.toLocaleString('es')} caracteres`;
 }
 
-// ─── Texto de ejemplo (nuevo) ─────────────────────────────────────────────────
+// ─── Texto de ejemplo ─────────────────────────────────────────────────────────
 function loadSampleText() {
   switchMode('text');
   textInput.value = SAMPLE_TEXT;
@@ -240,7 +235,7 @@ function loadSampleText() {
   showToast('Texto de ejemplo cargado. Pulsa «Iniciar parafraseado». ✨', 'info');
 }
 
-// ─── Cambio de modo (archivo / texto pegado) ──────────────────────────────────
+// ─── Cambio de modo ───────────────────────────────────────────────────────────
 function switchMode(mode) {
   currentMode = mode;
   tabFile.classList.toggle('active', mode === 'file');
@@ -268,8 +263,6 @@ async function handleFile(file) {
 
   const ext = file.name.split('.').pop().toLowerCase();
 
-  // FIX: .doc (binario antiguo) no puede leerse en el navegador.
-  // Antes se aceptaba y siempre fallaba; ahora se muestra un mensaje claro.
   if (ext === 'doc') {
     showErr('El formato .doc antiguo no está soportado. Guarda tu archivo como .docx e inténtalo de nuevo.');
     return;
@@ -308,7 +301,6 @@ async function handleFile(file) {
 }
 
 async function extractPDF(file) {
-  // Carga pdf.js solo cuando se necesita
   fileMetaSpan.innerText = 'Cargando lector de PDF...';
   await loadLib('pdfjs');
   const ab  = await file.arrayBuffer();
@@ -324,7 +316,6 @@ async function extractPDF(file) {
 }
 
 async function extractDOCX(file) {
-  // Carga mammoth solo cuando se necesita
   fileMetaSpan.innerText = 'Cargando lector de DOCX...';
   await loadLib('mammoth');
   const ab     = await file.arrayBuffer();
@@ -346,7 +337,6 @@ function countWords(text) {
   return trimmed.split(/\s+/).length;
 }
 
-// FIX: la etiqueta del nivel 2 era "Media"; debe ser "Medio"
 function updateIntensity(val) {
   const labels = ['Conservador', 'Medio', 'Agresivo'];
   const colors = ['#34d399', '#6ee7b7', '#fbbf24'];
@@ -373,7 +363,7 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// ─── Similitud léxica simple (Jaccard de palabras) ────────────────────────────
+// ─── Similitud léxica simple (Jaccard) ────────────────────────────────────────
 function calculateSimilarity(text1, text2) {
   const words1 = new Set(text1.toLowerCase().split(/\W+/).filter(w => w.length > 3));
   const words2 = new Set(text2.toLowerCase().split(/\W+/).filter(w => w.length > 3));
@@ -382,7 +372,7 @@ function calculateSimilarity(text1, text2) {
   return union.size === 0 ? 0 : Math.round((intersection.size / union.size) * 100);
 }
 
-// ─── Chunking ─────────────────────────────────────────────────────────────────
+// ─── Chunking corregido ───────────────────────────────────────────────────────
 function isTitle(line) {
   const t = line.trim();
   if (!t) return false;
@@ -390,13 +380,6 @@ function isTitle(line) {
     (t === t.toUpperCase() && t.length < 60 && !t.endsWith('.') && /[A-ZÁÉÍÓÚÑ]/.test(t));
 }
 
-/**
- * FIX CRÍTICO: antes un chunk solo se cortaba si la línea siguiente era un
- * título (`&& nextIsTitle`). Un texto sin títulos se convertía en un único
- * chunk gigante que podía superar el límite de la API.
- * Ahora hay corte duro por presupuesto (palabras y caracteres), corte suave
- * antes de títulos, y troceo por oraciones para líneas gigantes.
- */
 function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
   const lines  = text.split(/\r?\n/);
   const chunks = [];
@@ -417,7 +400,6 @@ function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
     const trimmed = line.trim();
     const words   = trimmed ? trimmed.split(/\s+/).length : 0;
 
-    // Línea individual demasiado grande: trocearla por oraciones
     if (words > maxWords || line.length > maxChars) {
       flush();
       for (const piece of splitLongLine(line, maxWords, maxChars)) chunks.push(piece);
@@ -430,10 +412,8 @@ function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
       charCount + line.length + 1 > maxChars;
 
     if (overBudget && current.length > 0) {
-      // Corte duro por presupuesto
       flush();
     } else if (nextIsTitle && current.length > 0 && wordCount > 80) {
-      // Corte suave: deja el título al inicio del siguiente segmento
       flush();
     }
 
@@ -446,7 +426,6 @@ function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
   return chunks;
 }
 
-/** Divide una línea enorme en trozos por oraciones (o por caracteres). */
 function splitLongLine(line, maxWords, maxChars) {
   const sentences = line.match(/[^.!?…]+[.!?…]+\s*/g) || [line];
   const pieces = [];
@@ -462,7 +441,6 @@ function splitLongLine(line, maxWords, maxChars) {
     }
     cur += sentence;
     wc  += sw;
-    // Salvaguarda extrema: cortar por caracteres si aun así es muy largo
     while (cur.length > maxChars) {
       pieces.push(cur.slice(0, maxChars));
       cur = cur.slice(maxChars);
@@ -491,19 +469,56 @@ async function fetchWithTimeout(url, options, timeoutMs, externalSignal) {
   }
 }
 
-/**
- * Llama a /api/paraphrase con backoff automático si el servidor responde 429
- * (límite de peticiones alcanzado).
- */
+// ─── NUEVO: Verificación rápida del endpoint antes de procesar ───────────────
+// Evita que el usuario espere a que fallen TODOS los segmentos para saber
+// que el problema es de despliegue/configuración.
+async function verifyEndpoint() {
+  try {
+    const check = await fetch('/api/paraphrase', { method: 'GET' });
+
+    if (check.status === 404) {
+      showErr('El endpoint /api/paraphrase no existe. Verifica que el archivo api/paraphrase.js esté en tu repositorio y que estés probando en Vercel (o con "vercel dev").');
+      return false;
+    }
+
+    const info = await check.json().catch(() => null);
+
+    if (info && info.keyConfigured === false) {
+      showErr('El servidor no tiene configurada la variable GROQ_API_KEY. Añádela en Vercel → Settings → Environment Variables y haz redeploy.');
+      return false;
+    }
+    return true;
+  } catch {
+    showErr('No se pudo contactar con el servidor (/api/paraphrase). Si estás probando en local, usa "vercel dev"; el endpoint no funciona con servidores estáticos.');
+    return false;
+  }
+}
+
+// ─── Petición por segmento (con reintentos de red y backoff en 429) ──────────
 async function paraphraseChunk(chunkText, opts, signal) {
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetchWithTimeout('/api/paraphrase', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: chunkText, ...opts })
-    }, 58000, signal);
+    let response;
 
+    try {
+      response = await fetchWithTimeout('/api/paraphrase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: chunkText, ...opts })
+      }, 58000, signal);
+    } catch (networkErr) {
+      // Si fue el usuario quien canceló, propagar directamente
+      if (signal && signal.aborted) throw networkErr;
+      // Error de red / endpoint caído: reintentar
+      if (attempt < maxRetries) {
+        logLine.innerText = `Reintentando conexión... (${attempt + 1}/${maxRetries})`;
+        await sleep(1200 * (attempt + 1));
+        continue;
+      }
+      throw new Error('No se pudo conectar con /api/paraphrase. Verifica el despliegue en Vercel.');
+    }
+
+    // Límite de peticiones (429): esperar y reintentar
     if (response.status === 429) {
       const data = await response.json().catch(() => ({}));
       if (attempt < maxRetries) {
@@ -524,7 +539,7 @@ async function paraphraseChunk(chunkText, opts, signal) {
   }
 }
 
-// ─── Cancelación (nuevo) ──────────────────────────────────────────────────────
+// ─── Cancelación ──────────────────────────────────────────────────────────────
 function cancelParaphrase() {
   if (runBtn.disabled && currentAbort) {
     cancelRequested = true;
@@ -547,6 +562,10 @@ async function startParaphrase() {
     if (!source) { showErr('Pega un texto primero.'); return; }
   }
 
+  // NUEVO: diagnóstico rápido del endpoint ANTES de procesar nada
+  const endpointOk = await verifyEndpoint();
+  if (!endpointOk) return;
+
   const tone        = toneSelect.value;
   const intensity   = parseInt(intensitySlider.value, 10);
   const model       = modelSelect.value;
@@ -561,7 +580,6 @@ async function startParaphrase() {
     return;
   }
 
-  // Estado del proceso
   runBtn.disabled   = true;
   cancelRequested   = false;
   currentAbort      = new AbortController();
@@ -579,6 +597,7 @@ async function startParaphrase() {
   const results = [];
   let errorCount     = 0;
   let truncatedCount = 0;
+  let firstError     = '';   // NUEVO: guarda el primer error para mostrarlo
   const startTime    = Date.now();
 
   for (let i = 0; i < chunks.length; i++) {
@@ -592,8 +611,6 @@ async function startParaphrase() {
     progressLabel.innerText  = `Segmento ${i + 1} de ${total}`;
 
     try {
-      // IMPORTANTE (FIX de seguridad): el prompt ahora se construye en el
-      // servidor. El cliente solo envía texto + opciones validadas.
       const data = await paraphraseChunk(chunks[i], opts, currentAbort.signal);
       if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
       if (data.truncated) truncatedCount++;
@@ -606,13 +623,13 @@ async function startParaphrase() {
         break;
       }
       errorCount++;
+      if (!firstError) firstError = err.message || String(err);
+      console.error(`[ParafraseAI] Error segmento ${i + 1}:`, err);
       dot.classList.remove('active');
       dot.classList.add('error');
-      results.push(chunks[i]); // conserva el original en los segmentos fallidos
-      console.error(`Error segmento ${i + 1}:`, err.message);
+      results.push(chunks[i]);
     }
 
-    // Pausa entre peticiones para no saturar la API
     if (i < chunks.length - 1 && !cancelRequested) await sleep(300);
   }
 
@@ -621,7 +638,7 @@ async function startParaphrase() {
   progressBarEl.setAttribute('aria-valuenow', '100');
   logLine.innerText = '';
 
-  // ── Caso: cancelado sin resultados ─────────────────────────────────────
+  // ── Cancelado sin resultados ───────────────────────────────────────────
   if (cancelRequested && results.length === 0) {
     progressSection.classList.remove('visible');
     runBtn.disabled = false;
@@ -629,12 +646,11 @@ async function startParaphrase() {
     return;
   }
 
-  // ── Caso: TODOS los segmentos fallaron → no mostrar el original como si
-  //    fuera un resultado válido ──────────────────────────────────────────
+  // ── Todos fallaron → mostrar el error REAL del primer segmento ─────────
   if (errorCount === total) {
     progressSection.classList.remove('visible');
     runBtn.disabled = false;
-    showErr('Todos los segmentos fallaron. Revisa tu conexión o inténtalo con un texto más corto.');
+    showErr(`Todos los segmentos fallaron. Detalle del primer error: ${firstError} · Revisa la pestaña Network (F12) para más información.`);
     return;
   }
 
@@ -658,13 +674,12 @@ async function startParaphrase() {
   outputSection.classList.add('visible');
 
   if (errorCount > 0) {
-    showErr(`⚠️ ${errorCount} de ${total} segmento(s) fallaron. El texto original fue conservado en esas secciones.`);
+    showErr(`⚠️ ${errorCount} de ${total} segmento(s) fallaron (${firstError}). El texto original fue conservado en esas secciones.`);
   }
   if (truncatedCount > 0) {
     showToast(`⚠️ ${truncatedCount} segmento(s) se cortaron por longitud. Prueba con un texto más corto.`, 'info');
   }
 
-  // Guardar en historial y pintar la lista
   saveToHistory({
     date: new Date().toISOString(),
     tone, intensity, model,
@@ -678,7 +693,7 @@ async function startParaphrase() {
   runBtn.disabled = false;
 }
 
-// ─── Modo comparación lado a lado (nuevo) ─────────────────────────────────────
+// ─── Modo comparación lado a lado ─────────────────────────────────────────────
 function toggleCompare() {
   const active = outputCompare.classList.toggle('side-by-side');
   compareOriginalPane.hidden = !active;
@@ -688,7 +703,7 @@ function toggleCompare() {
   }
 }
 
-// ─── Historial local (ahora con UI visible) ───────────────────────────────────
+// ─── Historial local ──────────────────────────────────────────────────────────
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem('parafrase_history') || '[]');
@@ -747,7 +762,6 @@ async function copyOutput() {
     await navigator.clipboard.writeText(text);
     showToast('✅ Copiado al portapapeles');
   } catch {
-    // Fallback para navegadores antiguos
     outputTextarea.select();
     outputTextarea.setSelectionRange(0, 999999);
     document.execCommand('copy');
@@ -761,7 +775,6 @@ async function downloadAsDocx() {
   if (!text) { showErr('No hay texto para descargar.'); return; }
 
   try {
-    // Carga la librería docx solo si hace falta (FIX de rendimiento)
     if (typeof window.docx === 'undefined' || !window.docx.Document) {
       showToast('Cargando generador DOCX...', 'info');
       await loadLib('docx');
@@ -850,7 +863,6 @@ function resetAll() {
   cancelRequested = false;
   showErr('');
   logLine.innerText = '';
-  // Desactiva el modo comparación
   outputCompare.classList.remove('side-by-side');
   compareOriginalPane.hidden = true;
   compareBtn.setAttribute('aria-pressed', 'false');
