@@ -248,7 +248,7 @@ export default async function handler(req, res) {
   }
 }
 
-// Duración máxima de la función (Hobby permite hasta 60s)
+// Duración máxima de la función (Hobby permite hasta 60s)--
 export const config = {
   maxDuration: 60
 };
