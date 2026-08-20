@@ -3,207 +3,190 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- SEO -->
-  <title>ParafraseAI · Parafraseador Inteligente</title>
-  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos, números y estructura. Gratis y sin registro.">
+  <meta name="description" content="Parafraseador inteligente con preservación de estructura. Convierte documentos manteniendo títulos, formato y significado.">
+  <meta name="keywords" content="parafraseo, reescritura, IA, documentos, PDF, DOCX, TXT">
   <meta name="author" content="Jaime Wong Franco">
-  <meta name="theme-color" content="#0d0f14">
-
-  <!-- Open Graph / redes sociales -->
   <meta property="og:title" content="ParafraseAI · Parafraseador Inteligente">
-  <meta property="og:description" content="Reescribe tus documentos con IA conservando su estructura.">
+  <meta property="og:description" content="Convierte tus documentos con IA manteniendo títulos y formato.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://github.com/jswongfranco/Parafraseo">
-
-  <!-- Favicon SVG inline (no necesita archivo externo) -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8D%EF%B8%8F%3C/text%3E%3C/svg%3E">
-
-  <!-- Fuentes autoalojadas vía Fontsource (reemplazan a Google Fonts) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-400.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-500.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-600.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-700.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5/latin-400.css">
-
+  <title>ParafraseAI · Parafraseador Inteligente · by Jaime Wong Franco</title>
+  <!-- FAVICON con emoji ✍️ -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' font-size='70'%3E✍️%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="app">
+<div class="app">
+  <div class="header">
+    <h1>✍️ ParafraseAI</h1>
+    <p>Parafraseador inteligente con preservación de estructura</p>
+  </div>
 
-    <!-- ═══════════ Header ═══════════ -->
-    <header class="header">
-      <h1>✍️ ParafraseAI</h1>
-      <p>Parafraseador inteligente con preservación de estructura</p>
-    </header>
+  <!-- ─── Card: Entrada ─── -->
+  <div class="card">
+    <div class="card-title">📄 Documento</div>
+    <div class="mode-tabs">
+      <button type="button" class="mode-tab active" id="tab-file">
+        <span>📁</span> Subir archivo
+      </button>
+      <button type="button" class="mode-tab" id="tab-text">
+        <span>✏️</span> Pegar texto
+      </button>
+    </div>
 
-    <!-- ═══════════ Entrada de documento ═══════════ -->
-    <section class="card">
-      <div class="card-title">📄 Documento</div>
-
-      <div class="mode-tabs" role="tablist" aria-label="Modo de entrada">
-        <button class="mode-tab active" id="tab-file" role="tab" aria-selected="true" type="button">📁 Subir archivo</button>
-        <button class="mode-tab" id="tab-text" role="tab" aria-selected="false" type="button">✏️ Pegar texto</button>
-      </div>
-
-      <div id="file-mode">
-        <div class="drop-zone" id="drop-zone">
-          <input type="file" id="file-input" accept=".pdf,.docx,.txt" aria-label="Seleccionar archivo PDF, DOCX o TXT">
-          <div class="drop-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-          </div>
-          <div>Arrastra un archivo aquí o haz clic para seleccionar · PDF, DOCX, TXT · máx. 5 MB</div>
+    <div id="file-mode">
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="file-input" accept=".pdf,.docx,.txt,.doc" aria-label="Subir archivo">
+        <div class="drop-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
         </div>
-
-        <div class="file-loaded" id="file-loaded" style="display:none">
-          <span id="file-icon">📄</span>
-          <div class="file-info">
-            <span id="file-name"></span>
-            <span id="file-meta" class="file-meta"></span>
-          </div>
-          <button id="clear-file-btn" type="button" aria-label="Quitar archivo">✖</button>
+        <div>
+          <strong>Arrastra un archivo aquí</strong><br>
+          <span style="color:var(--muted);font-size:0.8rem">o haz clic para seleccionar · PDF, DOCX, TXT · máx. 5 MB</span>
         </div>
       </div>
-
-      <textarea id="text-input" class="text-input-area" placeholder="Pega aquí tu texto..." aria-label="Texto a parafrasear"></textarea>
-
-      <div class="text-meta-row" id="text-meta-row" hidden>
-        <span id="text-counter">0 palabras · 0 caracteres</span>
-        <button class="link-btn" id="sample-btn" type="button">✨ Probar con un ejemplo</button>
-      </div>
-    </section>
-
-    <!-- ═══════════ Configuración ═══════════ -->
-    <section class="card">
-      <div class="card-title">⚙️ Configuración</div>
-
-      <div class="options-grid">
-        <div class="opt-group">
-          <label for="tone">Tono de escritura</label>
-          <select id="tone">
-            <option value="natural">🌿 Natural</option>
-            <option value="academico">🎓 Académico</option>
-            <option value="formal">💼 Formal</option>
-            <option value="conversacional">💬 Conversacional</option>
-          </select>
+      <div class="file-loaded" id="file-loaded" style="display:none">
+        <div id="file-icon">📎</div>
+        <div>
+          <strong id="file-name"></strong><br>
+          <small id="file-meta" style="color:var(--muted)"></small>
         </div>
-
-        <div class="opt-group">
-          <label for="model-select">Modelo de IA</label>
-          <select id="model-select">
-            <option value="llama-3.3-70b-versatile">🧠 Llama 3.3 70B · mejor calidad</option>
-            <option value="llama-3.1-8b-instant">⚡ Llama 3.1 8B · más rápido</option>
-            <option value="gemma2-9b-it">💎 Gemma 2 9B · equilibrado</option>
-          </select>
-        </div>
+        <button type="button" id="clear-file-btn" aria-label="Eliminar archivo">✖</button>
       </div>
+    </div>
 
-      <div class="intensity-row">
-        <label for="intensity">Intensidad del parafraseo <span id="intensity-val">Medio</span></label>
-        <input type="range" id="intensity" min="1" max="3" step="1" value="2" list="intensity-marks">
-        <datalist id="intensity-marks">
-          <option value="1" label="Conservador"></option>
-          <option value="2" label="Medio"></option>
-          <option value="3" label="Agresivo"></option>
-        </datalist>
+    <textarea id="text-input" class="text-input-area" style="display:none"
+      placeholder="Pega tu texto aquí... Los títulos (líneas cortas o con #) se preservarán automáticamente."
+      aria-label="Texto a parafrasear"></textarea>
+  </div>
+
+  <!-- ─── Card: Configuración ─── -->
+  <div class="card">
+    <div class="card-title">⚙️ Configuración</div>
+    <div class="options-grid">
+      <div class="opt-group">
+        <label for="tone">Tono de escritura</label>
+        <select id="tone" aria-label="Seleccionar tono">
+          <option value="natural">🌿 Natural</option>
+          <option value="academico">🎓 Académico</option>
+          <option value="formal">💼 Formal</option>
+          <option value="conversacional">💬 Conversacional</option>
+        </select>
       </div>
-
-      <div class="card-title card-title-sub">🧩 Preservar elementos</div>
-      <div class="preserve-row" id="preserve-chips">
-        <button class="toggle-chip active" data-key="titles" aria-pressed="true" type="button">📌 Títulos/encabezados</button>
-        <button class="toggle-chip active" data-key="numbers" aria-pressed="true" type="button">🔢 Números y fechas</button>
-        <button class="toggle-chip" data-key="technical" aria-pressed="false" type="button">⚙️ Términos técnicos</button>
+      <div class="opt-group">
+        <label for="model-select">Modelo de IA</label>
+        <select id="model-select" aria-label="Seleccionar modelo">
+          <option value="llama-3.3-70b-versatile">🧠 Llama 3.3 70B (calidad, 1k req/día)</option>
+          <option value="llama-3.1-8b-instant">⚡ Llama 3.1 8B (rápido, 14k req/día)</option>
+          <option value="mixtral-8x7b-32768">🔥 Mixtral 8x7B (5k req/día)</option>
+        </select>
       </div>
+    </div>
 
-      <div id="err-msg" class="err-msg" role="alert"></div>
-
-      <button class="run-btn" id="run-btn" type="button">▶ Iniciar parafraseado</button>
-      <p class="kbd-hint">Atajos: <kbd>Ctrl</kbd>+<kbd>Enter</kbd> parafrasear · <kbd>Esc</kbd> cancelar · <kbd>Ctrl</kbd>+<kbd>C</kbd> copiar resultado</p>
-    </section>
-
-    <!-- ═══════════ Progreso ═══════════ -->
-    <section class="card progress-section" id="progress-section">
-      <div class="progress-head">
-        <div class="card-title card-title-inline">⏳ Procesando...</div>
-        <button class="link-btn danger" id="cancel-btn" type="button">✖ Cancelar</button>
+    <div class="intensity-row">
+      <label for="intensity">
+        Intensidad del parafraseo
+        <span id="intensity-val">Media</span>
+      </label>
+      <input type="range" min="1" max="3" value="2" step="1" id="intensity" aria-label="Intensidad">
+      <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--muted);margin-top:4px">
+        <span>Conservador</span>
+        <span>Medio</span>
+        <span>Agresivo</span>
       </div>
-      <div class="progress-label" id="progress-label" aria-live="polite">Preparando...</div>
-      <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <div class="progress-fill" id="progress-fill"></div>
-      </div>
-      <div class="chunk-status" id="chunk-status"></div>
-      <div class="log-line" id="log-line" aria-live="polite"></div>
-    </section>
+    </div>
 
-    <!-- ═══════════ Resultado ═══════════ -->
-    <section class="card output-section" id="output-section">
-      <div class="output-header">
-        <div class="card-title card-title-inline">📝 Resultado</div>
-        <div class="output-actions">
-          <button class="icon-btn" id="compare-btn" aria-pressed="false" type="button" title="Ver original y resultado lado a lado">🔀 Comparar</button>
-          <button class="icon-btn" id="copy-btn" type="button">📋 Copiar</button>
-          <button class="icon-btn" id="download-docx-btn" type="button">📥 DOCX</button>
-          <button class="icon-btn" id="download-txt-btn" type="button">📄 TXT</button>
-          <button class="icon-btn" id="reset-btn" type="button">🔄 Nuevo</button>
-        </div>
+    <div class="card-title" style="margin-top:1.25rem">🧩 Preservar elementos</div>
+    <div class="preserve-row" id="preserve-chips">
+      <div class="toggle-chip active" data-key="titles" role="button" tabindex="0" aria-pressed="true">
+        📌 Títulos/encabezados
       </div>
-
-      <div class="stats-row">
-        <div class="stat-card">
-          <span class="stat-val" id="stat-orig">—</span>
-          <span class="stat-label">Palabras orig.</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-new">—</span>
-          <span class="stat-label">Palabras nuevas</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-chunks">—</span>
-          <span class="stat-label">Segmentos</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-val" id="stat-similarity">—</span>
-          <span class="stat-label">Similitud</span>
-        </div>
+      <div class="toggle-chip active" data-key="numbers" role="button" tabindex="0" aria-pressed="true">
+        🔢 Números y fechas
       </div>
-
-      <div class="output-compare" id="output-compare">
-        <div class="compare-pane" id="compare-original-pane" hidden>
-          <div class="pane-title">Texto original</div>
-          <textarea id="original-textarea" readonly aria-label="Texto original"></textarea>
-        </div>
-        <div class="compare-pane">
-          <div class="pane-title">Texto parafraseado</div>
-          <textarea id="output-textarea" aria-label="Texto parafraseado"></textarea>
-        </div>
+      <div class="toggle-chip active" data-key="technical" role="button" tabindex="0" aria-pressed="true">
+        ⚙️ Términos técnicos
       </div>
-    </section>
+    </div>
+  </div>
 
-    <!-- ═══════════ Historial ═══════════ -->
-    <section class="card history-section" id="history-section" hidden>
-      <div class="output-header">
-        <div class="card-title card-title-inline">🕘 Historial</div>
-        <button class="link-btn danger" id="clear-history-btn" type="button">🗑 Limpiar</button>
+  <!-- ─── Error / Mensaje ─── -->
+  <div class="err-msg" id="err-msg" role="alert" aria-live="polite"></div>
+
+  <!-- ─── Botón principal ─── -->
+  <button type="button" class="run-btn" id="run-btn" aria-label="Iniciar parafraseado">
+    <span>▶</span> Iniciar parafraseado
+  </button>
+
+  <!-- ─── Progreso ─── -->
+  <div class="progress-section card" id="progress-section" aria-live="polite">
+    <div class="progress-label" id="progress-label">Procesando...</div>
+    <div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <div class="chunk-status" id="chunk-status"></div>
+    <div class="log-line" id="log-line"></div>
+  </div>
+
+  <!-- ─── Resultado ─── -->
+  <div class="output-section card" id="output-section">
+    <div class="output-header">
+      <div class="card-title">📝 Resultado</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="icon-btn" id="copy-btn" title="Copiar al portapapeles (Ctrl+C)">
+          📋 Copiar
+        </button>
+        <button type="button" class="icon-btn" id="download-docx-btn" title="Descargar como DOCX">
+          📥 DOCX
+        </button>
+        <button type="button" class="icon-btn" id="download-txt-btn" title="Descargar como TXT">
+          📄 TXT
+        </button>
+        <button type="button" class="icon-btn" id="reset-btn" title="Empezar de nuevo">
+          🔄 Nuevo
+        </button>
       </div>
-      <div id="history-list" class="history-list"></div>
-    </section>
+    </div>
 
-    <!-- ═══════════ Footer ═══════════ -->
-    <footer class="footer">
-      ✨ Hecho por <strong>Jaime Wong Franco</strong> ·
-      <a href="https://github.com/jswongfranco/Parafraseo" target="_blank" rel="noopener">GitHub</a> ·
+    <div class="stats-row">
+      <div class="stat-card">
+        <span class="stat-val" id="stat-orig">—</span>
+        <span style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Palabras orig.</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="stat-new">—</span>
+        <span style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Palabras nuevas</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="stat-chunks">—</span>
+        <span style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Segmentos</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-val" id="stat-similarity">—</span>
+        <span style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Similitud</span>
+      </div>
+    </div>
+
+    <textarea class="output-textarea" id="output-textarea" readonly aria-label="Texto parafraseado"></textarea>
+  </div>
+
+  <!-- ─── Footer ─── -->
+  <div class="footer">
+    <p>
+      ✨ Hecho por <strong>Jaime Wong Franco</strong> · 
+      <a href="https://github.com/jswongfranco/Parafraseo" target="_blank" rel="noopener">GitHub</a> · 
       ParafraseAI ✨
-    </footer>
-  </main>
+    </p>
+  </div>
+</div>
 
-  <!-- Contenedor de notificaciones toast -->
-  <div id="toast-container" class="toast-container" aria-live="polite"></div>
-
-  <!-- pdf.js, mammoth y docx se cargan bajo demanda desde script.js -->
-  <script src="script.js"></script>
+<!-- ─── Scripts ─── -->
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" defer></script>
+<script src="script.js" defer></script>
 </body>
 </html>
