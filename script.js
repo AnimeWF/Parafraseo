@@ -2,8 +2,8 @@
 //  ParafraseAI · Frontend
 //  by Jaime Wong Franco
 //
-//  Detecta automáticamente qué modelos gratuitos tiene tu clave de Groq
-//  y llena el selector solo con los que sirven para parafrasear.
+//  · Detecta automáticamente los modelos gratuitos de tu clave de Groq
+//  · Modo comparación, historial visible, cancelar, contador, texto de ejemplo
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -27,13 +27,21 @@ const fileNameSpan     = document.getElementById('file-name');
 const fileMetaSpan     = document.getElementById('file-meta');
 const clearFileBtn     = document.getElementById('clear-file-btn');
 const textInput        = document.getElementById('text-input');
+const textMetaRow      = document.getElementById('text-meta-row');
+const textCounter      = document.getElementById('text-counter');
+const sampleBtn        = document.getElementById('sample-btn');
 const tabFile          = document.getElementById('tab-file');
 const tabText          = document.getElementById('tab-text');
 const fileModeDiv      = document.getElementById('file-mode');
 const runBtn           = document.getElementById('run-btn');
+const cancelBtn        = document.getElementById('cancel-btn');
 const progressSection  = document.getElementById('progress-section');
 const outputSection    = document.getElementById('output-section');
 const outputTextarea   = document.getElementById('output-textarea');
+const originalTextarea = document.getElementById('original-textarea');
+const outputCompare    = document.getElementById('output-compare');
+const compareOriginalPane = document.getElementById('compare-original-pane');
+const compareBtn       = document.getElementById('compare-btn');
 const statOrig         = document.getElementById('stat-orig');
 const statNew          = document.getElementById('stat-new');
 const statChunks       = document.getElementById('stat-chunks');
@@ -51,20 +59,26 @@ const intensitySlider  = document.getElementById('intensity');
 const intensityVal     = document.getElementById('intensity-val');
 const modelSelect      = document.getElementById('model-select');
 const toneSelect       = document.getElementById('tone');
+const historySection   = document.getElementById('history-section');
+const historyList      = document.getElementById('history-list');
+const clearHistoryBtn  = document.getElementById('clear-history-btn');
+const toastContainer   = document.getElementById('toast-container');
 
 // ─── Variables globales ───────────────────────────────────────────────────────
 let extractedText     = '';
 let currentMode       = 'file';
 let originalFilename  = '';
 let originalFileExt   = '';
+let lastOriginalText  = '';
 let paraphraseHistory = [];
 let modelsReady       = false;
+let currentAbort      = null;
+let cancelRequested   = false;
 
 const MAX_FILE_SIZE_MB = 5;
 
-// ─── Modelos preferidos (en orden de prioridad) ──────────────────────────────
+// ─── Modelos preferidos (orden de prioridad) ─────────────────────────────────
 // Los 3 primeros son los GRATUITOS disponibles en tu cuenta de Groq.
-// Los demás quedan por si Groq los habilita en el futuro.
 const PREFERRED_MODELS = [
   { id: 'openai/gpt-oss-120b',     label: '🚀 GPT-OSS 120B (mejor calidad)' },
   { id: 'qwen/qwen3.6-27b',        label: '⚖️ Qwen 3.6 27B (equilibrado)' },
@@ -77,6 +91,27 @@ const PREFERRED_MODELS = [
 // Modelos que NO sirven para parafrasear (audio, voz, moderación, agentes)
 const EXCLUDE_PATTERN = /whisper|tts|playai|image|embed|audio|speech|distil|orpheus|guard|compound|safeguard|allam/i;
 
+const TONE_LABELS = {
+  natural: '🌿 Natural',
+  academico: '🎓 Académico',
+  formal: '💼 Formal',
+  conversacional: '💬 Conversacional'
+};
+
+const MODEL_LABELS = {
+  'openai/gpt-oss-120b': 'GPT-OSS 120B',
+  'openai/gpt-oss-20b': 'GPT-OSS 20B',
+  'qwen/qwen3.6-27b': 'Qwen 3.6 27B'
+};
+
+const SAMPLE_TEXT = `LA IMPORTANCIA DE LA LECTURA EN LA ERA DIGITAL
+
+La lectura sigue siendo una de las herramientas más poderosas para el desarrollo del pensamiento crítico. Según un estudio publicado en 2023, los jóvenes que leen al menos 30 minutos al día muestran una comprensión lectora un 45 % superior a la media.
+
+Sin embargo, las pantallas han transformado nuestros hábitos. Hoy dedicamos un promedio de 7 horas diarias a dispositivos electrónicos, y la lectura profunda está en claro declive.
+
+Los especialistas recomiendan recuperar espacios de lectura sin interrupciones, aunque sea en bloques breves, para fortalecer la concentración y la memoria a largo plazo.`;
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
   tabFile.addEventListener('click', () => switchMode('file'));
@@ -84,18 +119,25 @@ function init() {
   fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
   clearFileBtn.addEventListener('click', clearFile);
   runBtn.addEventListener('click', startParaphrase);
+  cancelBtn.addEventListener('click', cancelParaphrase);
   copyBtn.addEventListener('click', copyOutput);
+  compareBtn.addEventListener('click', toggleCompare);
   downloadDocxBtn.addEventListener('click', downloadAsDocx);
   downloadTxtBtn.addEventListener('click', downloadAsTxt);
   resetBtn.addEventListener('click', resetAll);
+  sampleBtn.addEventListener('click', loadSampleText);
+  clearHistoryBtn.addEventListener('click', clearHistory);
   intensitySlider.addEventListener('input', (e) => updateIntensity(e.target.value));
 
   document.querySelectorAll('#preserve-chips .toggle-chip').forEach(chip => {
-    chip.addEventListener('click', () => chip.classList.toggle('active'));
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('active');
+      chip.setAttribute('aria-pressed', String(chip.classList.contains('active')));
+    });
   });
 
-  textInput.addEventListener('input', autoGrow);
-  textInput.addEventListener('paste', () => setTimeout(autoGrow, 0));
+  textInput.addEventListener('input', () => { autoGrow(); updateTextCounter(); });
+  textInput.addEventListener('paste', () => setTimeout(() => { autoGrow(); updateTextCounter(); }, 0));
 
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     dropZone.addEventListener(eventName, preventDefaults, false);
@@ -114,28 +156,53 @@ function init() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey) {
-      if (e.key === 'Enter' && !runBtn.disabled) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !runBtn.disabled) {
+      e.preventDefault();
+      startParaphrase();
+    }
+    if (e.key === 'Escape' && !runBtn.disabled) {
+      cancelParaphrase();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && document.activeElement === outputTextarea) {
+      if (outputTextarea.selectionStart === outputTextarea.selectionEnd) {
         e.preventDefault();
-        startParaphrase();
-      }
-      if (e.key === 'c' && document.activeElement === outputTextarea) {
-        if (outputTextarea.selectionStart === outputTextarea.selectionEnd) {
-          e.preventDefault();
-          copyOutput();
-        }
+        copyOutput();
       }
     }
   });
 
   updateIntensity(intensitySlider.value);
   loadHistory();
+  renderHistory();
   loadAvailableModels();
 }
 
 function preventDefaults(e) {
   e.preventDefault();
   e.stopPropagation();
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Notificaciones toast ─────────────────────────────────────────────────────
+function showToast(msg, type = 'success') {
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = msg;
+  toastContainer.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('hide');
+    setTimeout(() => toast.remove(), 350);
+  }, 2800);
+}
+
+let errTimer = null;
+function showErr(msg) {
+  errMsg.innerText = msg;
+  errMsg.classList.toggle('visible', !!msg);
+  if (errTimer) clearTimeout(errTimer);
 }
 
 // ─── Detección automática de modelos disponibles ─────────────────────────────
@@ -156,10 +223,8 @@ async function loadAvailableModels() {
 
     const available = new Set(data.models || []);
 
-    // 1) Modelos preferidos que tu clave SÍ tiene
     let options = PREFERRED_MODELS.filter(m => available.has(m.id));
 
-    // 2) Si ninguno coincide, usa cualquier modelo de chat disponible
     if (options.length === 0) {
       options = (data.models || [])
         .filter(id => !EXCLUDE_PATTERN.test(id))
@@ -169,7 +234,7 @@ async function loadAvailableModels() {
 
     if (options.length === 0) {
       modelSelect.innerHTML = '<option value="">❌ Sin modelos disponibles</option>';
-      showErr('⚠️ Tu clave de Groq no tiene acceso a modelos de chat. Revisa tu cuenta en console.groq.com.');
+      showErr('⚠️ Tu clave de Groq no tiene acceso a modelos de chat. Revisa console.groq.com.');
       return;
     }
 
@@ -186,21 +251,39 @@ async function loadAvailableModels() {
   }
 }
 
-// ─── Auto-grow textarea ───────────────────────────────────────────────────────
+// ─── Auto-grow textarea + contador ────────────────────────────────────────────
 function autoGrow() {
   textInput.style.height = 'auto';
   textInput.style.height = Math.min(textInput.scrollHeight, 600) + 'px';
 }
 
-// ─── Cambio de modo ───────────────────────────────────────────────────────────
+function updateTextCounter() {
+  const text = textInput.value;
+  const words = countWords(text);
+  textCounter.innerText = `${words.toLocaleString('es')} palabras · ${text.length.toLocaleString('es')} caracteres`;
+}
+
+function loadSampleText() {
+  switchMode('text');
+  textInput.value = SAMPLE_TEXT;
+  autoGrow();
+  updateTextCounter();
+  showToast('✨ Texto de ejemplo cargado. Pulsa «Iniciar parafraseado».', 'info');
+}
+
+// ─── Cambio de modo (archivo / texto pegado) ──────────────────────────────────
 function switchMode(mode) {
   currentMode = mode;
   tabFile.classList.toggle('active', mode === 'file');
   tabText.classList.toggle('active', mode === 'text');
+  tabFile.setAttribute('aria-selected', String(mode === 'file'));
+  tabText.setAttribute('aria-selected', String(mode === 'text'));
   fileModeDiv.style.display = mode === 'file' ? 'block' : 'none';
   textInput.style.display   = mode === 'text' ? 'block' : 'none';
+  textMetaRow.style.display = mode === 'text' ? 'flex' : 'none';
   if (mode === 'text') {
     extractedText = '';
+    updateTextCounter();
     setTimeout(() => textInput.focus(), 100);
   }
 }
@@ -241,8 +324,11 @@ async function handleFile(file) {
 
     const wc = countWords(extractedText);
     if (wc === 0) throw new Error('el archivo no contiene texto extraíble (¿PDF escaneado?)');
-    fileMetaSpan.innerHTML = `${(file.size / 1024).toFixed(1)} KB · ${wc.toLocaleString('es')} palabras · ${ext.toUpperCase()}`;
+
+    fileMetaSpan.innerText =
+      `${(file.size / 1024).toFixed(1)} KB · ${wc.toLocaleString('es')} palabras · ${ext.toUpperCase()}`;
     showErr('');
+    showToast(`📄 "${file.name}" cargado correctamente.`);
   } catch (e) {
     showErr('Error al leer el archivo: ' + e.message);
     extractedText = '';
@@ -251,10 +337,14 @@ async function handleFile(file) {
 }
 
 async function extractPDF(file) {
+  if (typeof pdfjsLib === 'undefined') {
+    throw new Error('no se cargó el lector de PDF. Recarga la página.');
+  }
   const ab  = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
   let text  = '';
   for (let i = 1; i <= pdf.numPages; i++) {
+    fileMetaSpan.innerText = `Extrayendo página ${i} de ${pdf.numPages}...`;
     const page    = await pdf.getPage(i);
     const content = await page.getTextContent();
     text += content.items.map(x => x.str).join(' ') + '\n';
@@ -263,6 +353,9 @@ async function extractPDF(file) {
 }
 
 async function extractDOCX(file) {
+  if (typeof mammoth === 'undefined') {
+    throw new Error('no se cargó el lector de DOCX. Recarga la página.');
+  }
   const ab     = await file.arrayBuffer();
   const result = await mammoth.extractRawText({ arrayBuffer: ab });
   return result.value;
@@ -294,17 +387,10 @@ function getPreserve() {
     .map(c => c.dataset.key);
 }
 
-let errTimer = null;
-function showErr(msg, isError = true) {
-  errMsg.innerText = msg;
-  errMsg.classList.toggle('visible', !!msg);
-  errMsg.style.background  = isError ? 'rgba(248,113,113,0.08)' : 'rgba(52,211,153,0.08)';
-  errMsg.style.borderColor = isError ? 'rgba(248,113,113,0.2)'  : 'rgba(52,211,153,0.2)';
-  errMsg.style.color       = isError ? 'var(--danger)'          : 'var(--success)';
-  if (errTimer) clearTimeout(errTimer);
-  if (!isError && msg) {
-    errTimer = setTimeout(() => errMsg.classList.remove('visible'), 3000);
-  }
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
 function calculateSimilarity(text1, text2) {
@@ -315,7 +401,7 @@ function calculateSimilarity(text1, text2) {
   return union.size === 0 ? 0 : Math.round((intersection.size / union.size) * 100);
 }
 
-// ─── Chunking CORREGIDO ───────────────────────────────────────────────────────
+// ─── Chunking corregido ───────────────────────────────────────────────────────
 function isTitle(line) {
   const t = line.trim();
   if (!t) return false;
@@ -393,26 +479,46 @@ function splitLongLine(line, maxWords, maxChars) {
   return pieces;
 }
 
-// ─── Fetch con timeout y reintentos ───────────────────────────────────────────
-async function fetchWithTimeout(url, options, timeoutMs = 30000, retries = 2) {
+// ─── Fetch con timeout, reintentos y cancelación ─────────────────────────────
+async function fetchWithTimeout(url, options, timeoutMs = 30000, retries = 1) {
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (cancelRequested) throw new DOMException('Cancelado', 'AbortError');
+
     const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    if (currentAbort) {
+      if (currentAbort.signal.aborted) controller.abort();
+      else currentAbort.signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timer);
+      if (currentAbort) currentAbort.signal.removeEventListener('abort', onExternalAbort);
       return response;
     } catch (err) {
       clearTimeout(timer);
+      if (currentAbort) currentAbort.signal.removeEventListener('abort', onExternalAbort);
+      if (cancelRequested) throw new DOMException('Cancelado', 'AbortError');
       if (attempt === retries) throw err;
       logLine.innerText = `Reintentando... (${attempt + 1}/${retries})`;
-      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      await sleep(1000 * (attempt + 1));
     }
   }
 }
 
+// ─── Cancelación ──────────────────────────────────────────────────────────────
+function cancelParaphrase() {
+  if (runBtn.disabled === false) return; // solo mientras procesa
+  cancelRequested = true;
+  if (currentAbort) currentAbort.abort();
+  logLine.innerText = 'Cancelando...';
+}
+
 // ─── Proceso principal ────────────────────────────────────────────────────────
 async function startParaphrase() {
+  if (runBtn.disabled) return;
   showErr('');
 
   if (!modelsReady) {
@@ -435,7 +541,7 @@ async function startParaphrase() {
   const preserve  = getPreserve();
 
   if (!model) {
-    showErr('No hay ningún modelo disponible. Revisa el mensaje de error de arriba.');
+    showErr('No hay ningún modelo disponible.');
     return;
   }
 
@@ -447,19 +553,27 @@ async function startParaphrase() {
     return;
   }
 
-  runBtn.disabled = true;
+  runBtn.disabled   = true;
+  cancelRequested   = false;
+  currentAbort      = new AbortController();
+  lastOriginalText  = source;
+
   progressSection.classList.add('visible');
   outputSection.classList.remove('visible');
+  progressFill.style.width = '0%';
   chunkStatusDiv.innerHTML = chunks.map((_, i) =>
     `<div class="chunk-dot" id="dot-${i}" title="Segmento ${i + 1}"></div>`
   ).join('');
 
   const results    = [];
   let errorCount   = 0;
+  let truncatedCount = 0;
   let firstError   = '';
   const startTime  = Date.now();
 
   for (let i = 0; i < chunks.length; i++) {
+    if (cancelRequested) break;
+
     const dot = document.getElementById(`dot-${i}`);
     dot.classList.add('active');
     logLine.innerText        = `Procesando segmento ${i + 1} de ${total}...`;
@@ -480,27 +594,40 @@ async function startParaphrase() {
 
       const data = await response.json();
       if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
+      if (data.truncated) truncatedCount++;
       results.push(data.paraphrased);
       dot.classList.remove('active');
       dot.classList.add('done');
     } catch (err) {
+      if (cancelRequested || err.name === 'AbortError') {
+        dot.classList.remove('active');
+        dot.classList.add('canceled');
+        break;
+      }
       errorCount++;
       if (!firstError) firstError = err.message || String(err);
       dot.classList.remove('active');
       dot.classList.add('error');
       results.push(chunks[i]);
-      console.error(`Error segmento ${i + 1}:`, err.message);
+      console.error(`Error segmento ${i + 1}:`, err);
     }
 
-    if (i < chunks.length - 1) {
-      await new Promise(r => setTimeout(r, 300));
-    }
+    if (i < chunks.length - 1 && !cancelRequested) await sleep(300);
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   progressFill.style.width = '100%';
   logLine.innerText = '';
 
+  // ── Cancelado sin resultados ───────────────────────────────────────────
+  if (cancelRequested && results.length === 0) {
+    progressSection.classList.remove('visible');
+    runBtn.disabled = false;
+    showToast('⏹ Parafraseo cancelado.', 'info');
+    return;
+  }
+
+  // ── Todos fallaron → mostrar el error real ─────────────────────────────
   if (errorCount === total) {
     progressSection.classList.remove('visible');
     runBtn.disabled = false;
@@ -508,23 +635,28 @@ async function startParaphrase() {
     return;
   }
 
+  // ── Renderizar resultado ───────────────────────────────────────────────
   const finalText = results.join('\n\n');
-  outputTextarea.value = finalText;
-  statOrig.innerText   = countWords(source).toLocaleString('es');
-  statNew.innerText    = countWords(finalText).toLocaleString('es');
-  statChunks.innerText = `${results.length - errorCount}/${total}`;
+  outputTextarea.value   = finalText;
+  originalTextarea.value = source;
+  statOrig.innerText     = countWords(source).toLocaleString('es');
+  statNew.innerText      = countWords(finalText).toLocaleString('es');
+  statChunks.innerText   = `${results.length - errorCount}/${total}`;
+  statSimilarity.innerText = calculateSimilarity(source, finalText) + '%';
 
-  const similarity = calculateSimilarity(source, finalText);
-  if (statSimilarity) statSimilarity.innerText = similarity + '%';
-
-  progressLabel.innerText = errorCount > 0
-    ? `⚠️ Completado con ${errorCount} error(es) en ${elapsed}s`
-    : `✅ Parafraseado completado en ${elapsed}s`;
+  progressLabel.innerText = cancelRequested
+    ? `⏹ Cancelado tras ${elapsed}s — resultado parcial`
+    : errorCount > 0
+      ? `⚠️ Completado con ${errorCount} error(es) en ${elapsed}s`
+      : `✅ Parafraseado completado en ${elapsed}s`;
 
   outputSection.classList.add('visible');
 
   if (errorCount > 0) {
     showErr(`⚠️ ${errorCount} de ${total} segmento(s) fallaron (${firstError}). El texto original fue conservado en esas secciones.`);
+  }
+  if (truncatedCount > 0) {
+    showToast(`⚠️ ${truncatedCount} segmento(s) se cortaron por longitud.`, 'info');
   }
 
   saveToHistory({
@@ -532,31 +664,79 @@ async function startParaphrase() {
     tone, intensity, model,
     originalWords: countWords(source),
     newWords: countWords(finalText),
-    similarity,
-    preview: finalText.substring(0, 100) + '...'
+    similarity: calculateSimilarity(source, finalText),
+    preview: finalText.substring(0, 120) + '...'
   });
+  renderHistory();
 
   runBtn.disabled = false;
 }
 
-// ─── Historial local ──────────────────────────────────────────────────────────
+// ─── Modo comparación lado a lado ─────────────────────────────────────────────
+function toggleCompare() {
+  if (!lastOriginalText) {
+    showToast('Primero genera un parafraseo para poder comparar.', 'info');
+    return;
+  }
+  const active = outputCompare.classList.toggle('side-by-side');
+  compareOriginalPane.hidden = !active;
+  compareBtn.classList.toggle('active', active);
+  compareBtn.setAttribute('aria-pressed', String(active));
+  if (active) originalTextarea.value = lastOriginalText;
+}
+
+// ─── Historial local (ahora visible) ──────────────────────────────────────────
+function getHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('parafrase_history') || '[]');
+  } catch {
+    return [];
+  }
+}
+
 function saveToHistory(entry) {
   try {
-    paraphraseHistory = JSON.parse(localStorage.getItem('parafrase_history') || '[]');
-    paraphraseHistory.unshift(entry);
-    if (paraphraseHistory.length > 10) paraphraseHistory.pop();
-    localStorage.setItem('parafrase_history', JSON.stringify(paraphraseHistory));
+    const history = getHistory();
+    history.unshift(entry);
+    if (history.length > 10) history.pop();
+    localStorage.setItem('parafrase_history', JSON.stringify(history));
   } catch (e) {
     console.warn('No se pudo guardar historial:', e);
   }
 }
 
 function loadHistory() {
-  try {
-    paraphraseHistory = JSON.parse(localStorage.getItem('parafrase_history') || '[]');
-  } catch (e) {
-    paraphraseHistory = [];
-  }
+  paraphraseHistory = getHistory();
+}
+
+function renderHistory() {
+  const history = getHistory();
+  historySection.hidden = history.length === 0;
+  if (history.length === 0) return;
+
+  historyList.innerHTML = history.map((h, idx) => {
+    const date = new Date(h.date).toLocaleString('es', {
+      day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit'
+    });
+    return `
+      <div class="history-item" style="animation-delay:${idx * 0.05}s">
+        <div class="history-item-head">
+          <span>${date}</span>
+          <span class="badge">${TONE_LABELS[h.tone] || h.tone}</span>
+          <span class="badge">${MODEL_LABELS[h.model] || h.model}</span>
+          <span class="badge">${h.originalWords}→${h.newWords} palabras</span>
+          <span class="badge">Similitud ${h.similarity}%</span>
+        </div>
+        <p class="history-preview">${escapeHtml(h.preview || '')}</p>
+      </div>`;
+  }).join('');
+}
+
+function clearHistory() {
+  localStorage.removeItem('parafrase_history');
+  renderHistory();
+  showToast('🗑 Historial borrado.', 'info');
 }
 
 // ─── Copiar al portapapeles ───────────────────────────────────────────────────
@@ -565,21 +745,21 @@ async function copyOutput() {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    showErr('✅ Copiado al portapapeles', false);
+    showToast('📋 Copiado al portapapeles');
   } catch {
     outputTextarea.select();
     outputTextarea.setSelectionRange(0, 999999);
     document.execCommand('copy');
-    showErr('✅ Copiado al portapapeles', false);
+    showToast('📋 Copiado al portapapeles');
   }
 }
 
 // ─── Descarga DOCX ────────────────────────────────────────────────────────────
 async function downloadAsDocx() {
   const text = outputTextarea.value;
-  if (!text) { showErr('No hay texto para descargar.', true); return; }
+  if (!text) { showErr('No hay texto para descargar.'); return; }
   if (!isDocxAvailable()) {
-    showErr('❌ La librería DOCX no está cargada. Recarga la página.', true);
+    showErr('❌ La librería DOCX no está cargada. Recarga la página.');
     return;
   }
 
@@ -622,16 +802,16 @@ async function downloadAsDocx() {
     const blob = await Packer.toBlob(docxDoc);
     const url  = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href  = url;
     link.download = `parafraseado_${new Date().toISOString().slice(0, 10)}.docx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showErr('✅ Documento DOCX descargado', false);
+    showToast('📥 Documento DOCX descargado');
   } catch (error) {
     console.error('Error en downloadAsDocx:', error);
-    showErr('Error al generar DOCX: ' + error.message, true);
+    showErr('Error al generar DOCX: ' + error.message);
   }
 }
 
@@ -648,7 +828,7 @@ function downloadAsTxt() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showErr('✅ Archivo TXT descargado', false);
+  showToast('📄 Archivo TXT descargado');
 }
 
 // ─── Reset ────────────────────────────────────────────────────────────────────
@@ -656,12 +836,19 @@ function resetAll() {
   clearFile();
   textInput.value = '';
   textInput.style.height = '';
+  updateTextCounter();
   outputSection.classList.remove('visible');
   progressSection.classList.remove('visible');
   progressFill.style.width = '0%';
   extractedText = '';
+  lastOriginalText = '';
+  cancelRequested = false;
   showErr('');
   logLine.innerText = '';
+  outputCompare.classList.remove('side-by-side');
+  compareOriginalPane.hidden = true;
+  compareBtn.classList.remove('active');
+  compareBtn.setAttribute('aria-pressed', 'false');
 }
 
 // ─── Arrancar ─────────────────────────────────────────────────────────────────
