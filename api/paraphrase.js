@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ParafraseAI · API Serverless (Vercel) · Endpoint: /api/paraphrase
-//  Modelos actualizados 2026: Llama 3.3 70B, Llama 3.1 8B, Gemma 2 9B
-//  (Mixtral 8x7B fue retirado por Groq en marzo de 2025)
+//  ⚠️ VERSIÓN DE DIAGNÓSTICO: muestra el error REAL de Groq para detectar el fallo
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TONES = {
@@ -18,9 +17,9 @@ const INTENSITY_TEXT = {
 };
 
 const PRESERVE_RULES = {
-  titles: '- NO modifiques los títulos, encabezados ni líneas que empiecen con # o estén en MAYÚSCULAS CORTAS. Cópialos exactamente igual.\n',
-  numbers: '- Preserva todos los números, fechas, porcentajes y datos exactos sin cambiarlos.\n',
-  technical: '- Mantén los términos técnicos, siglas y nombres propios sin usar sinónimos.\n'
+  titles: '- NO modifiques los títulos ni líneas en MAYÚSCULAS CORTAS. Cópialos igual.\n',
+  numbers: '- Preserva todos los números, fechas y porcentajes exactos.\n',
+  technical: '- Mantén los términos técnicos y siglas sin sinónimos.\n'
 };
 
 function buildPrompt(text, tone, intensity, preserve) {
@@ -28,15 +27,13 @@ function buildPrompt(text, tone, intensity, preserve) {
   for (const key of preserve) {
     if (PRESERVE_RULES[key]) preserveRules += PRESERVE_RULES[key];
   }
-  return `Eres un parafraseador profesional en español con amplia experiencia en reescritura de textos. Tu tarea es reescribir ÚNICAMENTE los párrafos de contenido, respetando siempre los títulos.
+  return `Eres un parafraseador profesional en español. Reescribe ÚNICAMENTE los párrafos de contenido, respetando los títulos.
 
-REGLAS OBLIGATORIAS:
+REGLAS:
 1. Tono: ${TONES[tone] || TONES.natural}.
 2. Intensidad: ${INTENSITY_TEXT[intensity] || INTENSITY_TEXT[2]}.
-${preserveRules}3. NO añadas comentarios, explicaciones ni prefijos.
-4. NO uses frases como "En resumen", "Para concluir" al final.
-5. Devuelve SOLO el texto reescrito, manteniendo la misma estructura.
-6. Los títulos deben aparecer idénticos al original.
+${preserveRules}3. NO añadas comentarios ni prefijos.
+4. Devuelve SOLO el texto reescrito, con la misma estructura.
 
 TEXTO A PARAFRASEAR:
 ${text}`;
@@ -48,34 +45,24 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Método no permitido. Usa POST.' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Usa POST.' });
 
   const { text, tone, intensity, preserve, model, temperature } = req.body || {};
 
   if (!text || typeof text !== 'string' || !text.trim()) {
-    return res.status(400).json({ error: 'Falta el texto o está vacío.' });
-  }
-  if (text.length > 11000) {
-    return res.status(400).json({ error: 'Texto demasiado largo (máx. 11000 caracteres).' });
+    return res.status(400).json({ error: 'Falta el texto.' });
   }
 
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
-    console.error('[ParafraseAI] Falta GROQ_API_KEY');
-    return res.status(500).json({
-      error: 'Falta GROQ_API_KEY. Configúrala en Vercel → Settings → Environment Variables y haz Redeploy.'
-    });
+    return res.status(500).json({ error: 'Falta GROQ_API_KEY en Vercel.' });
   }
 
-  // ── MODELOS VÁLIDOS EN GROQ (2026) ──────────────────────────────────────
-  // Mixtral 8x7B fue RETIRADO por Groq, ya no funciona.
+  // ── MODELOS VÁLIDOS (Mixtral fue retirado por Groq) ─────────────────────
   const ALLOWED_MODELS = [
-    'llama-3.3-70b-versatile',   // mejor calidad
-    'llama-3.1-8b-instant',      // más rápido
-    'gemma2-9b-it'               // equilibrado
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'gemma2-9b-it'
   ];
   const modelName = ALLOWED_MODELS.includes(model) ? model : 'llama-3.3-70b-versatile';
 
@@ -90,9 +77,6 @@ export default async function handler(req, res) {
 
   const prompt = buildPrompt(text.trim(), safeTone, safeIntensity, safePreserve);
 
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Cache-Control', 'no-store');
-
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 55000);
@@ -102,8 +86,7 @@ export default async function handler(req, res) {
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'User-Agent': 'ParafraseAI/3.0'
+        'Authorization': `Bearer ${GROQ_API_KEY}`
       },
       body: JSON.stringify({
         model: modelName,
@@ -119,46 +102,35 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error('[ParafraseAI] Error Groq:', JSON.stringify(errorData));
+      const groqMessage = errorData?.error?.message || JSON.stringify(errorData) || 'Sin detalle';
+      console.error('[ParafraseAI] Groq error:', response.status, groqMessage);
 
-      if (response.status === 429) {
-        return res.status(429).json({ error: 'API saturada. Espera unos segundos.', retryAfter: 8 });
-      }
-      if (response.status === 401 || response.status === 403) {
-        return res.status(502).json({ error: 'Clave GROQ inválida o expirada. Genera una nueva en console.groq.com.' });
-      }
-      if (response.status === 400) {
-        const msg = errorData?.error?.message || '';
-        // Si menciona el modelo, es que el modelo no existe
-        if (msg.toLowerCase().includes('model')) {
-          return res.status(400).json({ error: `Modelo no disponible en Groq: ${modelName}. Usa llama-3.3-70b-versatile.` });
-        }
-        return res.status(400).json({ error: msg || 'Petición inválida a Groq.' });
-      }
-      return res.status(502).json({ error: 'Error del proveedor de IA.' });
+      // 🔍 DIAGNÓSTICO: devolvemos el mensaje REAL de Groq
+      return res.status(response.status).json({
+        error: `[Groq ${response.status}] ${groqMessage} · Modelo enviado: ${modelName}`
+      });
     }
 
     const data = await response.json();
-    const choice = data?.choices?.[0];
-    const paraphrased = choice?.message?.content;
+    const paraphrased = data?.choices?.[0]?.message?.content;
 
     if (!paraphrased || !paraphrased.trim()) {
-      return res.status(502).json({ error: 'La API devolvió una respuesta vacía.' });
+      return res.status(502).json({ error: 'Groq devolvió respuesta vacía.' });
     }
 
     return res.status(200).json({
       paraphrased: paraphrased.trim(),
       model: modelName,
-      truncated: choice?.finish_reason === 'length',
       usage: data?.usage || null
     });
 
   } catch (error) {
     console.error('[ParafraseAI] Error interno:', error.message);
     if (error.name === 'AbortError') {
-      return res.status(504).json({ error: 'La solicitud tardó demasiado.' });
+      return res.status(504).json({ error: 'Timeout: la solicitud tardó demasiado.' });
     }
-    return res.status(500).json({ error: 'Error interno del servidor.' });
+    // 🔍 DIAGNÓSTICO: mostramos el error real
+    return res.status(500).json({ error: `Error interno: ${error.message}` });
   }
 }
 
