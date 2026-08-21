@@ -2,8 +2,8 @@
 //  ParafraseAI · Frontend
 //  by Jaime Wong Franco
 //
-//  NUEVO: detecta automáticamente qué modelos de Groq tiene disponibles TU
-//  clave y llena el selector sola. Ya nunca se enviará un modelo inexistente.
+//  Detecta automáticamente qué modelos gratuitos tiene tu clave de Groq
+//  y llena el selector solo con los que sirven para parafrasear.
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -63,18 +63,19 @@ let modelsReady       = false;
 const MAX_FILE_SIZE_MB = 5;
 
 // ─── Modelos preferidos (en orden de prioridad) ──────────────────────────────
-// El selector se llena SOLO con los que tu clave de Groq tenga habilitados.
+// Los 3 primeros son los GRATUITOS disponibles en tu cuenta de Groq.
+// Los demás quedan por si Groq los habilita en el futuro.
 const PREFERRED_MODELS = [
-  { id: 'llama-3.3-70b-versatile',                   label: '🧠 Llama 3.3 70B (calidad)' },
-  { id: 'llama-3.1-8b-instant',                      label: '⚡ Llama 3.1 8B (rápido)' },
-  { id: 'gemma2-9b-it',                              label: '💎 Gemma 2 9B (equilibrado)' },
-  { id: 'openai/gpt-oss-120b',                       label: '🚀 GPT-OSS 120B (avanzado)' },
-  { id: 'openai/gpt-oss-20b',                        label: '🛰️ GPT-OSS 20B' },
-  { id: 'qwen/qwen3-32b',                            label: '🀄 Qwen3 32B' },
-  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: '🦙 Llama 4 Scout' },
-  { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: '🐎 Llama 4 Maverick' },
-  { id: 'moonshotai/kimi-k2-instruct',               label: '🌙 Kimi K2' }
+  { id: 'openai/gpt-oss-120b',     label: '🚀 GPT-OSS 120B (mejor calidad)' },
+  { id: 'qwen/qwen3.6-27b',        label: '⚖️ Qwen 3.6 27B (equilibrado)' },
+  { id: 'openai/gpt-oss-20b',      label: '⚡ GPT-OSS 20B (rápido)' },
+  { id: 'llama-3.3-70b-versatile', label: '🧠 Llama 3.3 70B (si se habilita)' },
+  { id: 'llama-3.1-8b-instant',    label: '🦙 Llama 3.1 8B (si se habilita)' },
+  { id: 'gemma2-9b-it',            label: '💎 Gemma 2 9B (si se habilita)' }
 ];
+
+// Modelos que NO sirven para parafrasear (audio, voz, moderación, agentes)
+const EXCLUDE_PATTERN = /whisper|tts|playai|image|embed|audio|speech|distil|orpheus|guard|compound|safeguard|allam/i;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
@@ -119,7 +120,6 @@ function init() {
         startParaphrase();
       }
       if (e.key === 'c' && document.activeElement === outputTextarea) {
-        // Solo copia todo si NO hay una selección parcial
         if (outputTextarea.selectionStart === outputTextarea.selectionEnd) {
           e.preventDefault();
           copyOutput();
@@ -130,7 +130,7 @@ function init() {
 
   updateIntensity(intensitySlider.value);
   loadHistory();
-  loadAvailableModels(); // ← detecta qué modelos puede usar TU clave
+  loadAvailableModels();
 }
 
 function preventDefaults(e) {
@@ -162,8 +162,8 @@ async function loadAvailableModels() {
     // 2) Si ninguno coincide, usa cualquier modelo de chat disponible
     if (options.length === 0) {
       options = (data.models || [])
-        .filter(id => !/whisper|tts|playai|image|embed|audio|speech|distil/i.test(id))
-        .slice(0, 10)
+        .filter(id => !EXCLUDE_PATTERN.test(id))
+        .slice(0, 8)
         .map(id => ({ id, label: id }));
     }
 
@@ -316,8 +316,6 @@ function calculateSimilarity(text1, text2) {
 }
 
 // ─── Chunking CORREGIDO ───────────────────────────────────────────────────────
-// Antes solo cortaba frente a un título; un texto sin títulos se volvía un
-// único chunk gigante. Ahora corta siempre por presupuesto de palabras/caracteres.
 function isTitle(line) {
   const t = line.trim();
   if (!t) return false;
@@ -464,12 +462,11 @@ async function startParaphrase() {
   for (let i = 0; i < chunks.length; i++) {
     const dot = document.getElementById(`dot-${i}`);
     dot.classList.add('active');
-    logLine.innerText      = `Procesando segmento ${i + 1} de ${total}...`;
+    logLine.innerText        = `Procesando segmento ${i + 1} de ${total}...`;
     progressFill.style.width = `${(i / total) * 100}%`;
     progressLabel.innerText  = `Segmento ${i + 1} de ${total}`;
 
     try {
-      // El prompt ahora se construye en el servidor (más seguro)
       const response = await fetchWithTimeout('/api/paraphrase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -504,7 +501,6 @@ async function startParaphrase() {
   progressFill.style.width = '100%';
   logLine.innerText = '';
 
-  // ── TODOS fallaron → mostrar el error real, NO el texto original ───────
   if (errorCount === total) {
     progressSection.classList.remove('visible');
     runBtn.disabled = false;

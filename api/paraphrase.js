@@ -2,8 +2,11 @@
 //  ParafraseAI · API Serverless (Vercel)
 //  Endpoint: /api/paraphrase
 //
-//  GET  → Diagnóstico: valida tu clave y lista los modelos que TU cuenta puede usar
+//  GET  → Diagnóstico: valida tu clave y lista los modelos disponibles
 //  POST → Parafrasea el texto enviado
+//
+//  Optimizado para modelos GRATUITOS: GPT-OSS 120B/20B y Qwen 3.6 27B.
+//  (Los GPT-OSS necesitan temperature 1.0 / top_p 1.0, sus valores de entreno)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TONES = {
@@ -62,8 +65,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── GET: Diagnóstico de la clave + lista de modelos disponibles ─────────
-  // Abre https://TU-SITIO.vercel.app/api/paraphrase en el navegador para verlo.
+  // ── GET: Diagnóstico de la clave + lista de modelos ─────────────────────
   if (req.method === 'GET') {
     try {
       const resp = await fetch('https://api.groq.com/openai/v1/models', {
@@ -73,7 +75,7 @@ export default async function handler(req, res) {
 
       if (!resp.ok) {
         const hint = resp.status === 401
-          ? 'La clave GROQ_API_KEY es inválida o expiró. Genera una nueva en console.groq.com/keys y actualízala en Vercel.'
+          ? 'La clave GROQ_API_KEY es inválida o expiró. Genera una nueva en console.groq.com/keys.'
           : 'Revisa el estado de tu cuenta en console.groq.com.';
         return res.status(resp.status).json({
           status: 'error',
@@ -109,17 +111,24 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres por segmento).' });
   }
 
-  // Sanitizar el nombre del modelo (solo caracteres válidos)
+  // Sanitizar el nombre del modelo
   const modelName = typeof model === 'string' && /^[a-zA-Z0-9._\/-]{1,80}$/.test(model)
     ? model
-    : 'llama-3.1-8b-instant';
+    : 'openai/gpt-oss-20b';
 
   const safeTone      = TONES[tone] ? tone : 'natural';
   const safeIntensity = [1, 2, 3].includes(Number(intensity)) ? Number(intensity) : 2;
   const safePreserve  = Array.isArray(preserve)
     ? preserve.filter(k => PRESERVE_RULES[k])
     : ['titles', 'numbers'];
-  const tempValue = [0.3, 0.7, 1.0][safeIntensity - 1];
+
+  // ── Parámetros según el modelo ──────────────────────────────────────────
+  // Los modelos GPT-OSS fueron entrenados con temperature 1.0 y top_p 1.0;
+  // usar otros valores degrada la calidad de la respuesta.
+  const isGptOss    = modelName.startsWith('openai/gpt-oss');
+  const tempValue   = isGptOss ? 1.0 : [0.3, 0.7, 1.0][safeIntensity - 1];
+  const topPValue   = isGptOss ? 1.0 : 0.9;
+  const maxTokens   = 4096;
 
   const prompt = buildPrompt(text.trim(), safeTone, safeIntensity, safePreserve);
 
@@ -133,14 +142,14 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'User-Agent': 'ParafraseAI/3.0'
+        'User-Agent': 'ParafraseAI/4.0'
       },
       body: JSON.stringify({
         model: modelName,
         messages: [{ role: 'user', content: prompt }],
         temperature: tempValue,
-        max_tokens: 4096,
-        top_p: 0.9,
+        max_tokens: maxTokens,
+        top_p: topPValue,
         stream: false
       })
     });
@@ -154,8 +163,8 @@ export default async function handler(req, res) {
 
       if (response.status === 429) {
         return res.status(429).json({
-          error: 'Límite de peticiones de Groq alcanzado. Espera unos segundos.',
-          retryAfter: 8
+          error: 'Límite diario/horario de Groq alcanzado. Espera unos minutos.',
+          retryAfter: 30
         });
       }
       if (response.status === 401 || response.status === 403) {
@@ -165,7 +174,7 @@ export default async function handler(req, res) {
       }
       if (response.status === 404) {
         return res.status(404).json({
-          error: `El modelo "${modelName}" no está disponible para tu clave. Recarga la página para actualizar la lista de modelos.`
+          error: `El modelo "${modelName}" no está disponible para tu clave. Recarga la página para actualizar la lista.`
         });
       }
       return res.status(502).json({ error: `Error de Groq: ${groqMsg}` });
