@@ -4,12 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ParafraseAI · Parafraseador Inteligente</title>
-  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA conservando títulos, números y estructura.">
+  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA. Modo humanizar anti-detección, títulos preservados y documentos largos.">
   <meta name="author" content="Jaime Wong Franco">
   <meta name="theme-color" content="#0d0f14">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8D%EF%B8%8F%3C/text%3E%3C/svg%3E">
 
-  <!-- Fuentes (Fontsource, autoalojadas vía CDN) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-400.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-500.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/sora@5/latin-600.css">
@@ -24,10 +23,10 @@
     <!-- ═══════════ Header ═══════════ -->
     <header class="header">
       <h1>✍️ ParafraseAI</h1>
-      <p>Parafraseador inteligente con preservación de estructura</p>
+      <p>Parafraseador profesional con modo humanizar y preservación de estructura</p>
     </header>
 
-    <!-- ═══════════ Entrada de documento ═══════════ -->
+    <!-- ═══════════ Documento ═══════════ -->
     <section class="card">
       <div class="card-title">📄 Documento</div>
 
@@ -46,7 +45,7 @@
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
           </div>
-          <div>Arrastra un archivo aquí o haz clic para seleccionar · PDF, DOCX, TXT · máx. 5 MB</div>
+          <div>Arrastra un archivo aquí o haz clic para seleccionar · PDF, DOCX, TXT · máx. 5 MB · hasta ~60 páginas</div>
         </div>
 
         <div class="file-loaded" id="file-loaded" style="display:none">
@@ -100,6 +99,49 @@
         </div>
       </div>
 
+      <div class="card-title card-title-sub">🎯 Opciones avanzadas</div>
+
+      <div class="options-grid options-grid-3">
+        <div class="opt-group">
+          <label for="audience-select">Público objetivo</label>
+          <select id="audience-select">
+            <option value="general">👥 Público general</option>
+            <option value="experto">🎓 Experto / especialista</option>
+            <option value="estudiante">🧒 Estudiante</option>
+          </select>
+        </div>
+
+        <div class="opt-group">
+          <label for="length-select">Longitud del resultado</label>
+          <select id="length-select">
+            <option value="resumir">✂️ Resumir (−30 %)</option>
+            <option value="igual" selected>⚖️ Mantener igual</option>
+            <option value="expandir">➕ Expandir (+30 %)</option>
+          </select>
+        </div>
+
+        <div class="opt-group">
+          <label for="form-select">Tratamiento</label>
+          <select id="form-select">
+            <option value="neutral" selected>▪️ Neutro / impersonal por defecto</option>
+            <option value="usted">🤝 Usted</option>
+            <option value="tu">👋 Tú</option>
+            <option value="impersonal">📋 Impersonal («se observa…»)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Modo humanizar -->
+      <div class="switch-row">
+        <div class="switch-info">
+          <span class="switch-label">🎭 Modo humanizar (anti-IA)</span>
+          <span class="switch-desc">Varía el ritmo de las frases y elimina expresiones típicas de IA para un resultado más natural</span>
+        </div>
+        <button class="switch active" id="chip-humanize" role="switch" aria-checked="true" type="button" aria-label="Activar modo humanizar">
+          <span class="switch-thumb"></span>
+        </button>
+      </div>
+
       <div class="card-title card-title-sub">🧩 Preservar elementos</div>
       <div class="preserve-row" id="preserve-chips">
         <button class="toggle-chip active" data-key="titles" aria-pressed="true" type="button">📌 Títulos/encabezados</button>
@@ -119,6 +161,7 @@
         <div class="card-title card-title-inline">⏳ Procesando...</div>
         <button class="link-btn danger" id="cancel-btn" type="button">✖ Cancelar</button>
       </div>
+      <div class="est-time" id="est-time"></div>
       <div class="progress-label" id="progress-label" aria-live="polite">Preparando...</div>
       <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
         <div class="progress-fill" id="progress-fill"></div>
@@ -135,12 +178,25 @@
           <button class="icon-btn" id="compare-btn" aria-pressed="false" type="button" title="Ver original y resultado lado a lado">🔀 Comparar</button>
           <button class="icon-btn" id="copy-btn" type="button">📋 Copiar</button>
           <button class="icon-btn" id="download-docx-btn" type="button">📥 DOCX</button>
+          <button class="icon-btn" id="download-pdf-btn" type="button">📑 PDF</button>
           <button class="icon-btn" id="download-txt-btn" type="button">📄 TXT</button>
           <button class="icon-btn" id="reset-btn" type="button">🔄 Nuevo</button>
         </div>
       </div>
 
-      <div class="stats-row">
+      <!-- Versiones -->
+      <div class="versions-bar" id="versions-bar" hidden>
+        <div class="versions-pills" id="versions-pills"></div>
+        <button class="icon-btn" id="gen-version-btn" type="button" title="Volver a parafrasear el mismo texto con la configuración actual">🎲 Generar otra versión</button>
+      </div>
+
+      <!-- Alerta de similitud alta -->
+      <div class="alert-box" id="similarity-alert" hidden>
+        ⚠️ Similitud muy alta con el original (<strong><span id="similarity-alert-val"></span>%</strong>).
+        Para reducir el riesgo de detección: sube la intensidad a «Agresivo», activa «Humanizar» y pulsa 🎲 Generar otra versión.
+      </div>
+
+      <div class="stats-row stats-row-6">
         <div class="stat-card">
           <span class="stat-val" id="stat-orig">—</span>
           <span class="stat-label">Palabras orig.</span>
@@ -156,6 +212,14 @@
         <div class="stat-card">
           <span class="stat-val" id="stat-similarity">—</span>
           <span class="stat-label">Similitud</span>
+        </div>
+        <div class="stat-card" title="Estimación basada en ritmo de frases y expresiones típicas de IA">
+          <span class="stat-val" id="stat-naturalness">—</span>
+          <span class="stat-label">Naturalidad</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val" id="stat-readtime">—</span>
+          <span class="stat-label">Lectura</span>
         </div>
       </div>
 
@@ -174,7 +238,7 @@
     <!-- ═══════════ Historial ═══════════ -->
     <section class="card history-section" id="history-section" hidden>
       <div class="output-header">
-        <div class="card-title card-title-inline">🕘 Historial</div>
+        <div class="card-title card-title-inline">🕘 Historial <span class="history-hint">(clic para recuperar)</span></div>
         <button class="link-btn danger" id="clear-history-btn" type="button">🗑 Limpiar</button>
       </div>
       <div id="history-list" class="history-list"></div>
@@ -191,7 +255,7 @@
   <!-- Notificaciones toast -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- ═══════════ FIX: librerías para leer PDF, DOCX y generar DOCX ═══════════ -->
+  <!-- Librerías para leer PDF, DOCX y generar DOCX -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>

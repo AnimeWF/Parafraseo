@@ -1,9 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ParafraseAI · Frontend
+//  ParafraseAI · Frontend Profesional
 //  by Jaime Wong Franco
 //
-//  · Detecta automáticamente los modelos gratuitos de tu clave de Groq
-//  · Modo comparación, historial visible, cancelar, contador, texto de ejemplo
+//  · Modo humanizar + puntuación de naturalidad
+//  · Público objetivo, longitud y tratamiento
+//  · Hasta 3 versiones del mismo texto (🎲)
+//  · Documentos largos: 40 segmentos, paralelo (2 a la vez), tiempo estimado
+//  · Alerta de similitud alta, exportar PDF, historial clicable
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -36,6 +39,7 @@ const fileModeDiv      = document.getElementById('file-mode');
 const runBtn           = document.getElementById('run-btn');
 const cancelBtn        = document.getElementById('cancel-btn');
 const progressSection  = document.getElementById('progress-section');
+const estTimeEl        = document.getElementById('est-time');
 const outputSection    = document.getElementById('output-section');
 const outputTextarea   = document.getElementById('output-textarea');
 const originalTextarea = document.getElementById('original-textarea');
@@ -46,6 +50,13 @@ const statOrig         = document.getElementById('stat-orig');
 const statNew          = document.getElementById('stat-new');
 const statChunks       = document.getElementById('stat-chunks');
 const statSimilarity   = document.getElementById('stat-similarity');
+const statNaturalness  = document.getElementById('stat-naturalness');
+const statReadtime     = document.getElementById('stat-readtime');
+const similarityAlert  = document.getElementById('similarity-alert');
+const similarityAlertVal = document.getElementById('similarity-alert-val');
+const versionsBar      = document.getElementById('versions-bar');
+const versionsPills    = document.getElementById('versions-pills');
+const genVersionBtn    = document.getElementById('gen-version-btn');
 const errMsg           = document.getElementById('err-msg');
 const progressFill     = document.getElementById('progress-fill');
 const progressLabel    = document.getElementById('progress-label');
@@ -53,12 +64,17 @@ const chunkStatusDiv   = document.getElementById('chunk-status');
 const logLine          = document.getElementById('log-line');
 const copyBtn          = document.getElementById('copy-btn');
 const downloadDocxBtn  = document.getElementById('download-docx-btn');
+const downloadPdfBtn   = document.getElementById('download-pdf-btn');
 const downloadTxtBtn   = document.getElementById('download-txt-btn');
 const resetBtn         = document.getElementById('reset-btn');
 const intensitySlider  = document.getElementById('intensity');
 const intensityVal     = document.getElementById('intensity-val');
 const modelSelect      = document.getElementById('model-select');
 const toneSelect       = document.getElementById('tone');
+const audienceSelect   = document.getElementById('audience-select');
+const lengthSelect     = document.getElementById('length-select');
+const formSelect       = document.getElementById('form-select');
+const chipHumanize     = document.getElementById('chip-humanize');
 const historySection   = document.getElementById('history-section');
 const historyList      = document.getElementById('history-list');
 const clearHistoryBtn  = document.getElementById('clear-history-btn');
@@ -67,35 +83,40 @@ const toastContainer   = document.getElementById('toast-container');
 // ─── Variables globales ───────────────────────────────────────────────────────
 let extractedText     = '';
 let currentMode       = 'file';
-let originalFilename  = '';
-let originalFileExt   = '';
 let lastOriginalText  = '';
-let paraphraseHistory = [];
 let modelsReady       = false;
 let currentAbort      = null;
 let cancelRequested   = false;
+let processing        = false;
+let versions          = [];   // [{ text, words, similarity, naturalness, readtime, model }]
+let currentVersionIdx = -1;
 
 const MAX_FILE_SIZE_MB = 5;
+const MAX_CHUNKS       = 40;  // hasta ~22.000 palabras / ~60 páginas
+const CONCURRENCY      = 2;   // segmentos procesados en paralelo
 
-// ─── Modelos preferidos (orden de prioridad) ─────────────────────────────────
-// Los 3 primeros son los GRATUITOS disponibles en tu cuenta de Groq.
+// Segundos estimados por segmento según modelo
+const MODEL_SECONDS = {
+  'openai/gpt-oss-120b': 20,
+  'openai/gpt-oss-20b': 6,
+  'qwen/qwen3.6-27b': 10
+};
+
+// ─── Modelos preferidos (los gratuitos de tu cuenta primero) ─────────────────
 const PREFERRED_MODELS = [
   { id: 'openai/gpt-oss-120b',     label: '🚀 GPT-OSS 120B (mejor calidad)' },
   { id: 'qwen/qwen3.6-27b',        label: '⚖️ Qwen 3.6 27B (equilibrado)' },
-  { id: 'openai/gpt-oss-20b',      label: '⚡ GPT-OSS 20B (rápido)' },
+  { id: 'openai/gpt-oss-20b',      label: '⚡ GPT-OSS 20B (rápido, ideal documentos largos)' },
   { id: 'llama-3.3-70b-versatile', label: '🧠 Llama 3.3 70B (si se habilita)' },
   { id: 'llama-3.1-8b-instant',    label: '🦙 Llama 3.1 8B (si se habilita)' },
   { id: 'gemma2-9b-it',            label: '💎 Gemma 2 9B (si se habilita)' }
 ];
 
-// Modelos que NO sirven para parafrasear (audio, voz, moderación, agentes)
 const EXCLUDE_PATTERN = /whisper|tts|playai|image|embed|audio|speech|distil|orpheus|guard|compound|safeguard|allam/i;
 
 const TONE_LABELS = {
-  natural: '🌿 Natural',
-  academico: '🎓 Académico',
-  formal: '💼 Formal',
-  conversacional: '💬 Conversacional'
+  natural: '🌿 Natural', academico: '🎓 Académico',
+  formal: '💼 Formal', conversacional: '💬 Conversacional'
 };
 
 const MODEL_LABELS = {
@@ -103,6 +124,16 @@ const MODEL_LABELS = {
   'openai/gpt-oss-20b': 'GPT-OSS 20B',
   'qwen/qwen3.6-27b': 'Qwen 3.6 27B'
 };
+
+// Expresiones típicas de IA (para la puntuación de naturalidad)
+const AI_PHRASES = [
+  'en conclusión', 'cabe destacar', 'cabe señalar', 'es importante mencionar',
+  'es importante destacar', 'en la actualidad', 'sin duda', 'en este sentido',
+  'juega un papel crucial', 'es fundamental', 'hoy en día', 'en el mundo actual',
+  'resulta evidente', 'es menester', 'en resumen', 'asimismo', 'del mismo modo',
+  'de igual manera', 'por otro lado', 'en primer lugar', 'en segundo lugar',
+  'finalmente', 'no cabe duda', 'vale la pena', 'en pocas palabras'
+];
 
 const SAMPLE_TEXT = `LA IMPORTANCIA DE LA LECTURA EN LA ERA DIGITAL
 
@@ -122,12 +153,19 @@ function init() {
   cancelBtn.addEventListener('click', cancelParaphrase);
   copyBtn.addEventListener('click', copyOutput);
   compareBtn.addEventListener('click', toggleCompare);
+  genVersionBtn.addEventListener('click', generateAnotherVersion);
   downloadDocxBtn.addEventListener('click', downloadAsDocx);
+  downloadPdfBtn.addEventListener('click', downloadAsPdf);
   downloadTxtBtn.addEventListener('click', downloadAsTxt);
   resetBtn.addEventListener('click', resetAll);
   sampleBtn.addEventListener('click', loadSampleText);
   clearHistoryBtn.addEventListener('click', clearHistory);
   intensitySlider.addEventListener('input', (e) => updateIntensity(e.target.value));
+
+  chipHumanize.addEventListener('click', () => {
+    chipHumanize.classList.toggle('active');
+    chipHumanize.setAttribute('aria-checked', String(chipHumanize.classList.contains('active')));
+  });
 
   document.querySelectorAll('#preserve-chips .toggle-chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -148,11 +186,22 @@ function init() {
   dropZone.addEventListener('drop', (e) => {
     dropZone.classList.remove('drag-over');
     const files = e.dataTransfer.files;
-    if (files.length > 1) {
-      showErr('Solo se permite subir un archivo a la vez.');
-      return;
-    }
+    if (files.length > 1) { showErr('Solo se permite subir un archivo a la vez.'); return; }
     if (files[0]) handleFile(files[0]);
+  });
+
+  // Selección de versiones (delegación)
+  versionsPills.addEventListener('click', (e) => {
+    const pill = e.target.closest('.version-pill');
+    if (!pill) return;
+    selectVersion(parseInt(pill.dataset.idx, 10));
+  });
+
+  // Historial clicable (delegación)
+  historyList.addEventListener('click', (e) => {
+    const item = e.target.closest('.history-item');
+    if (!item) return;
+    loadHistoryItem(parseInt(item.dataset.idx, 10));
   });
 
   document.addEventListener('keydown', (e) => {
@@ -160,9 +209,7 @@ function init() {
       e.preventDefault();
       startParaphrase();
     }
-    if (e.key === 'Escape' && !runBtn.disabled) {
-      cancelParaphrase();
-    }
+    if (e.key === 'Escape' && processing) cancelParaphrase();
     if ((e.ctrlKey || e.metaKey) && e.key === 'c' && document.activeElement === outputTextarea) {
       if (outputTextarea.selectionStart === outputTextarea.selectionEnd) {
         e.preventDefault();
@@ -172,21 +219,14 @@ function init() {
   });
 
   updateIntensity(intensitySlider.value);
-  loadHistory();
   renderHistory();
   loadAvailableModels();
 }
 
-function preventDefaults(e) {
-  e.preventDefault();
-  e.stopPropagation();
-}
+function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-// ─── Notificaciones toast ─────────────────────────────────────────────────────
+// ─── Toasts y errores ─────────────────────────────────────────────────────────
 function showToast(msg, type = 'success') {
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
@@ -195,7 +235,7 @@ function showToast(msg, type = 'success') {
   setTimeout(() => {
     toast.classList.add('hide');
     setTimeout(() => toast.remove(), 350);
-  }, 2800);
+  }, 3200);
 }
 
 let errTimer = null;
@@ -205,7 +245,7 @@ function showErr(msg) {
   if (errTimer) clearTimeout(errTimer);
 }
 
-// ─── Detección automática de modelos disponibles ─────────────────────────────
+// ─── Detección automática de modelos ──────────────────────────────────────────
 async function loadAvailableModels() {
   modelSelect.innerHTML = '<option value="">⏳ Verificando modelos...</option>';
   runBtn.disabled = true;
@@ -222,7 +262,6 @@ async function loadAvailableModels() {
     }
 
     const available = new Set(data.models || []);
-
     let options = PREFERRED_MODELS.filter(m => available.has(m.id));
 
     if (options.length === 0) {
@@ -234,24 +273,21 @@ async function loadAvailableModels() {
 
     if (options.length === 0) {
       modelSelect.innerHTML = '<option value="">❌ Sin modelos disponibles</option>';
-      showErr('⚠️ Tu clave de Groq no tiene acceso a modelos de chat. Revisa console.groq.com.');
+      showErr('⚠️ Tu clave de Groq no tiene acceso a modelos de chat.');
       return;
     }
 
-    modelSelect.innerHTML = options
-      .map(m => `<option value="${m.id}">${m.label}</option>`)
-      .join('');
-
+    modelSelect.innerHTML = options.map(m => `<option value="${m.id}">${m.label}</option>`).join('');
     modelsReady = true;
     runBtn.disabled = false;
     showErr('');
   } catch (e) {
     modelSelect.innerHTML = '<option value="">❌ Sin conexión</option>';
-    showErr('⚠️ No se pudo conectar con la API para cargar los modelos. Recarga la página.');
+    showErr('⚠️ No se pudo conectar con la API. Recarga la página.');
   }
 }
 
-// ─── Auto-grow textarea + contador ────────────────────────────────────────────
+// ─── Utilidades de texto ──────────────────────────────────────────────────────
 function autoGrow() {
   textInput.style.height = 'auto';
   textInput.style.height = Math.min(textInput.scrollHeight, 600) + 'px';
@@ -259,8 +295,8 @@ function autoGrow() {
 
 function updateTextCounter() {
   const text = textInput.value;
-  const words = countWords(text);
-  textCounter.innerText = `${words.toLocaleString('es')} palabras · ${text.length.toLocaleString('es')} caracteres`;
+  textCounter.innerText =
+    `${countWords(text).toLocaleString('es')} palabras · ${text.length.toLocaleString('es')} caracteres`;
 }
 
 function loadSampleText() {
@@ -268,10 +304,9 @@ function loadSampleText() {
   textInput.value = SAMPLE_TEXT;
   autoGrow();
   updateTextCounter();
-  showToast('✨ Texto de ejemplo cargado. Pulsa «Iniciar parafraseado».', 'info');
+  showToast('✨ Texto de ejemplo cargado.', 'info');
 }
 
-// ─── Cambio de modo (archivo / texto pegado) ──────────────────────────────────
 function switchMode(mode) {
   currentMode = mode;
   tabFile.classList.toggle('active', mode === 'file');
@@ -288,87 +323,6 @@ function switchMode(mode) {
   }
 }
 
-// ─── Manejo de archivo ────────────────────────────────────────────────────────
-async function handleFile(file) {
-  if (!file) return;
-
-  if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-    showErr(`El archivo supera el límite de ${MAX_FILE_SIZE_MB} MB. Usa un archivo más pequeño.`);
-    return;
-  }
-
-  const ext = file.name.split('.').pop().toLowerCase();
-
-  if (ext === 'doc') {
-    showErr('El formato .doc antiguo no está soportado. Guarda tu archivo como .docx e inténtalo de nuevo.');
-    return;
-  }
-  if (!['pdf', 'docx', 'txt'].includes(ext)) {
-    showErr('Formato no soportado. Usa PDF, DOCX o TXT.');
-    return;
-  }
-
-  originalFilename = file.name;
-  originalFileExt  = ext;
-  fileLoadedDiv.style.display = 'flex';
-  fileNameSpan.innerText = file.name;
-  fileMetaSpan.innerText = 'Leyendo...';
-
-  const icons = { pdf: '📕', docx: '📘', txt: '📄' };
-  document.getElementById('file-icon').innerText = icons[ext] || '📎';
-
-  try {
-    if (ext === 'txt')       extractedText = await file.text();
-    else if (ext === 'pdf')  extractedText = await extractPDF(file);
-    else                     extractedText = await extractDOCX(file);
-
-    const wc = countWords(extractedText);
-    if (wc === 0) throw new Error('el archivo no contiene texto extraíble (¿PDF escaneado?)');
-
-    fileMetaSpan.innerText =
-      `${(file.size / 1024).toFixed(1)} KB · ${wc.toLocaleString('es')} palabras · ${ext.toUpperCase()}`;
-    showErr('');
-    showToast(`📄 "${file.name}" cargado correctamente.`);
-  } catch (e) {
-    showErr('Error al leer el archivo: ' + e.message);
-    extractedText = '';
-    fileLoadedDiv.style.display = 'none';
-  }
-}
-
-async function extractPDF(file) {
-  if (typeof pdfjsLib === 'undefined') {
-    throw new Error('no se cargó el lector de PDF. Recarga la página.');
-  }
-  const ab  = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
-  let text  = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    fileMetaSpan.innerText = `Extrayendo página ${i} de ${pdf.numPages}...`;
-    const page    = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map(x => x.str).join(' ') + '\n';
-  }
-  return text;
-}
-
-async function extractDOCX(file) {
-  if (typeof mammoth === 'undefined') {
-    throw new Error('no se cargó el lector de DOCX. Recarga la página.');
-  }
-  const ab     = await file.arrayBuffer();
-  const result = await mammoth.extractRawText({ arrayBuffer: ab });
-  return result.value;
-}
-
-function clearFile() {
-  extractedText = '';
-  fileLoadedDiv.style.display = 'none';
-  fileInput.value = '';
-  showErr('');
-}
-
-// ─── Utilidades ───────────────────────────────────────────────────────────────
 function countWords(text) {
   const trimmed = text.trim();
   if (!trimmed) return 0;
@@ -393,12 +347,126 @@ function escapeHtml(str) {
   }[c]));
 }
 
+function formatDuration(sec) {
+  if (sec < 60) return `~${sec} s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `~${m} min ${s} s` : `~${m} min`;
+}
+
+// ─── Similitud léxica (Jaccard) ───────────────────────────────────────────────
 function calculateSimilarity(text1, text2) {
   const words1 = new Set(text1.toLowerCase().split(/\W+/).filter(w => w.length > 3));
   const words2 = new Set(text2.toLowerCase().split(/\W+/).filter(w => w.length > 3));
   const intersection = new Set([...words1].filter(x => words2.has(x)));
   const union = new Set([...words1, ...words2]);
   return union.size === 0 ? 0 : Math.round((intersection.size / union.size) * 100);
+}
+
+// ─── Puntuación de naturalidad (heurística, sin costo extra) ─────────────────
+// Mide: variación en la longitud de frases (+), frases IA detectadas (−),
+// y repeticiones al inicio de oraciones (−).
+function calculateNaturalness(text) {
+  const lower = text.toLowerCase();
+  let bannedHits = 0;
+  AI_PHRASES.forEach(p => {
+    let idx = 0;
+    while ((idx = lower.indexOf(p, idx)) !== -1) { bannedHits++; idx += p.length; }
+  });
+
+  const sentences = text.split(/[.!?…]+/).map(s => s.trim()).filter(Boolean);
+  if (sentences.length < 2) return 60;
+
+  const lens = sentences.map(s => s.split(/\s+/).length);
+  const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
+  if (mean === 0) return 60;
+  const variance = lens.reduce((a, b) => a + (b - mean) ** 2, 0) / lens.length;
+  const cv = Math.sqrt(variance) / mean;
+
+  const starters = sentences.map(s => (s.split(/\s+/)[0] || '').toLowerCase());
+  const freq = {};
+  starters.forEach(w => { freq[w] = (freq[w] || 0) + 1; });
+  const maxRepeat = Math.max(...Object.values(freq));
+  const repeatRatio = maxRepeat / sentences.length;
+
+  let score = 55;
+  score += Math.min(25, cv * 55);
+  score -= Math.min(35, bannedHits * 7);
+  score -= Math.max(0, (repeatRatio - 0.25) * 40);
+  return Math.max(8, Math.min(97, Math.round(score)));
+}
+
+// ─── Manejo de archivos ───────────────────────────────────────────────────────
+async function handleFile(file) {
+  if (!file) return;
+
+  if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+    showErr(`El archivo supera el límite de ${MAX_FILE_SIZE_MB} MB.`);
+    return;
+  }
+
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if (ext === 'doc') {
+    showErr('El formato .doc antiguo no está soportado. Guarda tu archivo como .docx.');
+    return;
+  }
+  if (!['pdf', 'docx', 'txt'].includes(ext)) {
+    showErr('Formato no soportado. Usa PDF, DOCX o TXT.');
+    return;
+  }
+
+  fileLoadedDiv.style.display = 'flex';
+  fileNameSpan.innerText = file.name;
+  fileMetaSpan.innerText = 'Leyendo...';
+  const icons = { pdf: '📕', docx: '📘', txt: '📄' };
+  document.getElementById('file-icon').innerText = icons[ext] || '📎';
+
+  try {
+    if (ext === 'txt')      extractedText = await file.text();
+    else if (ext === 'pdf') extractedText = await extractPDF(file);
+    else                    extractedText = await extractDOCX(file);
+
+    const wc = countWords(extractedText);
+    if (wc === 0) throw new Error('el archivo no contiene texto extraíble (¿PDF escaneado?)');
+
+    fileMetaSpan.innerText =
+      `${(file.size / 1024).toFixed(1)} KB · ${wc.toLocaleString('es')} palabras · ${ext.toUpperCase()}`;
+    showErr('');
+    showToast(`📄 "${file.name}" cargado correctamente.`);
+  } catch (e) {
+    showErr('Error al leer el archivo: ' + e.message);
+    extractedText = '';
+    fileLoadedDiv.style.display = 'none';
+  }
+}
+
+async function extractPDF(file) {
+  if (typeof pdfjsLib === 'undefined') throw new Error('no se cargó el lector de PDF. Recarga la página.');
+  const ab  = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let text  = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    fileMetaSpan.innerText = `Extrayendo página ${i} de ${pdf.numPages}...`;
+    const page    = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(x => x.str).join(' ') + '\n';
+  }
+  return text;
+}
+
+async function extractDOCX(file) {
+  if (typeof mammoth === 'undefined') throw new Error('no se cargó el lector de DOCX. Recarga la página.');
+  const ab     = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer: ab });
+  return result.value;
+}
+
+function clearFile() {
+  extractedText = '';
+  fileLoadedDiv.style.display = 'none';
+  fileInput.value = '';
+  showErr('');
 }
 
 // ─── Chunking corregido ───────────────────────────────────────────────────────
@@ -412,16 +480,12 @@ function isTitle(line) {
 function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
   const lines  = text.split(/\r?\n/);
   const chunks = [];
-  let current   = [];
-  let wordCount = 0;
-  let charCount = 0;
+  let current = [], wordCount = 0, charCount = 0;
 
   const flush = () => {
     const joined = current.join('\n').trim();
     if (joined) chunks.push(joined);
-    current = [];
-    wordCount = 0;
-    charCount = 0;
+    current = []; wordCount = 0; charCount = 0;
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -436,15 +500,10 @@ function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
     }
 
     const nextIsTitle = i + 1 < lines.length && isTitle(lines[i + 1]);
-    const overBudget  =
-      wordCount + words > maxWords ||
-      charCount + line.length + 1 > maxChars;
+    const overBudget  = wordCount + words > maxWords || charCount + line.length + 1 > maxChars;
 
-    if (overBudget && current.length > 0) {
-      flush();
-    } else if (nextIsTitle && current.length > 0 && wordCount > 80) {
-      flush();
-    }
+    if (overBudget && current.length > 0) flush();
+    else if (nextIsTitle && current.length > 0 && wordCount > 80) flush();
 
     current.push(line);
     wordCount += words;
@@ -458,22 +517,12 @@ function splitIntoChunks(text, maxWords = 550, maxChars = 7000) {
 function splitLongLine(line, maxWords, maxChars) {
   const sentences = line.match(/[^.!?…]+[.!?…]+\s*/g) || [line];
   const pieces = [];
-  let cur = '';
-  let wc  = 0;
-
+  let cur = '', wc = 0;
   for (const sentence of sentences) {
     const sw = sentence.trim() ? sentence.trim().split(/\s+/).length : 0;
-    if (wc + sw > maxWords && cur.trim()) {
-      pieces.push(cur.trim());
-      cur = '';
-      wc  = 0;
-    }
-    cur += sentence;
-    wc  += sw;
-    while (cur.length > maxChars) {
-      pieces.push(cur.slice(0, maxChars));
-      cur = cur.slice(maxChars);
-    }
+    if (wc + sw > maxWords && cur.trim()) { pieces.push(cur.trim()); cur = ''; wc = 0; }
+    cur += sentence; wc += sw;
+    while (cur.length > maxChars) { pieces.push(cur.slice(0, maxChars)); cur = cur.slice(maxChars); }
   }
   if (cur.trim()) pieces.push(cur.trim());
   return pieces;
@@ -508,23 +557,17 @@ async function fetchWithTimeout(url, options, timeoutMs = 30000, retries = 1) {
   }
 }
 
-// ─── Cancelación ──────────────────────────────────────────────────────────────
 function cancelParaphrase() {
-  if (runBtn.disabled === false) return; // solo mientras procesa
+  if (!processing) return;
   cancelRequested = true;
   if (currentAbort) currentAbort.abort();
   logLine.innerText = 'Cancelando...';
 }
 
-// ─── Proceso principal ────────────────────────────────────────────────────────
+// ─── Inicio del parafraseado ──────────────────────────────────────────────────
 async function startParaphrase() {
-  if (runBtn.disabled) return;
+  if (processing || !modelsReady) return;
   showErr('');
-
-  if (!modelsReady) {
-    showErr('La lista de modelos aún no está lista. Espera un momento o recarga la página.');
-    return;
-  }
 
   let source = '';
   if (currentMode === 'file') {
@@ -535,29 +578,49 @@ async function startParaphrase() {
     if (!source) { showErr('Pega un texto primero.'); return; }
   }
 
+  await runPipeline(source);
+}
+
+// 🎲 Generar otra versión del último texto
+async function generateAnotherVersion() {
+  if (processing) return;
+  if (!lastOriginalText) {
+    showToast('Primero genera un parafraseo.', 'info');
+    return;
+  }
+  showErr('');
+  await runPipeline(lastOriginalText);
+}
+
+// ─── Pipeline principal ───────────────────────────────────────────────────────
+async function runPipeline(source) {
   const tone      = toneSelect.value;
   const intensity = parseInt(intensitySlider.value, 10);
   const model     = modelSelect.value;
   const preserve  = getPreserve();
+  const humanize  = chipHumanize.classList.contains('active');
+  const audience  = audienceSelect.value;
+  const length    = lengthSelect.value;
+  const form      = formSelect.value;
 
-  if (!model) {
-    showErr('No hay ningún modelo disponible.');
-    return;
-  }
+  if (!model) { showErr('No hay ningún modelo disponible.'); return; }
 
   const chunks = splitIntoChunks(source);
   const total  = chunks.length;
 
-  if (total > 20) {
-    showErr(`El documento es muy largo (${total} segmentos). Considera dividirlo en partes más pequeñas.`);
+  if (total > MAX_CHUNKS) {
+    showErr(`El documento es muy largo (${total} segmentos, máximo ${MAX_CHUNKS}). Divídelo en 2 o más partes.`);
     return;
   }
 
-  runBtn.disabled   = true;
-  cancelRequested   = false;
-  currentAbort      = new AbortController();
-  lastOriginalText  = source;
+  // ── Preparar UI de progreso ────────────────────────────────────────────
+  processing      = true;
+  cancelRequested = false;
+  currentAbort    = new AbortController();
+  lastOriginalText = source;
 
+  runBtn.disabled = true;
+  genVersionBtn.disabled = true;
   progressSection.classList.add('visible');
   outputSection.classList.remove('visible');
   progressFill.style.width = '0%';
@@ -565,72 +628,87 @@ async function startParaphrase() {
     `<div class="chunk-dot" id="dot-${i}" title="Segmento ${i + 1}"></div>`
   ).join('');
 
-  const results    = [];
-  let errorCount   = 0;
-  let truncatedCount = 0;
-  let firstError   = '';
-  const startTime  = Date.now();
+  // ── Tiempo estimado + sugerencia inteligente de modelo ────────────────
+  const perSeg = MODEL_SECONDS[model] || 10;
+  const estSeconds = Math.ceil((total / CONCURRENCY) * perSeg);
+  estTimeEl.innerText = `🕐 Tiempo estimado: ${formatDuration(estSeconds)} · ${total} segmento(s) · ${CONCURRENCY} en paralelo`;
 
-  for (let i = 0; i < chunks.length; i++) {
-    if (cancelRequested) break;
-
-    const dot = document.getElementById(`dot-${i}`);
-    dot.classList.add('active');
-    logLine.innerText        = `Procesando segmento ${i + 1} de ${total}...`;
-    progressFill.style.width = `${(i / total) * 100}%`;
-    progressLabel.innerText  = `Segmento ${i + 1} de ${total}`;
-
-    try {
-      const response = await fetchWithTimeout('/api/paraphrase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: chunks[i], tone, intensity, preserve, model })
-      }, 55000, 1);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Error HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
-      if (data.truncated) truncatedCount++;
-      results.push(data.paraphrased);
-      dot.classList.remove('active');
-      dot.classList.add('done');
-    } catch (err) {
-      if (cancelRequested || err.name === 'AbortError') {
-        dot.classList.remove('active');
-        dot.classList.add('canceled');
-        break;
-      }
-      errorCount++;
-      if (!firstError) firstError = err.message || String(err);
-      dot.classList.remove('active');
-      dot.classList.add('error');
-      results.push(chunks[i]);
-      console.error(`Error segmento ${i + 1}:`, err);
-    }
-
-    if (i < chunks.length - 1 && !cancelRequested) await sleep(300);
+  if (total > 15 && model === 'openai/gpt-oss-120b') {
+    showToast('💡 Documento largo: con GPT-OSS 20B irás más rápido y gastarás menos cuota diaria.', 'info');
   }
+
+  // ── Procesar en paralelo (pool de CONCURRENCY trabajadores) ───────────
+  const opts = { tone, intensity, preserve, model, humanize, audience, length, form };
+  const results = new Array(chunks.length);
+  let errorCount = 0, truncatedCount = 0, completed = 0;
+  let firstError = '';
+  let nextIndex  = 0;
+  const startTime = Date.now();
+
+  async function worker() {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= chunks.length || cancelRequested) return;
+
+      const dot = document.getElementById(`dot-${i}`);
+      if (dot) dot.classList.add('active');
+
+      try {
+        const response = await fetchWithTimeout('/api/paraphrase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: chunks[i], ...opts })
+        }, 55000, 1);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Error HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
+        if (data.truncated) truncatedCount++;
+        results[i] = data.paraphrased;
+        if (dot) { dot.classList.remove('active'); dot.classList.add('done'); }
+      } catch (err) {
+        if (cancelRequested || err.name === 'AbortError') {
+          if (dot) { dot.classList.remove('active'); dot.classList.add('canceled'); }
+          return;
+        }
+        errorCount++;
+        if (!firstError) firstError = err.message || String(err);
+        results[i] = chunks[i]; // conservar original en segmentos fallidos
+        if (dot) { dot.classList.remove('active'); dot.classList.add('error'); }
+        console.error(`Error segmento ${i + 1}:`, err);
+      }
+
+      completed++;
+      progressFill.style.width = `${(completed / total) * 100}%`;
+      progressLabel.innerText  = `${completed} de ${total} segmentos`;
+      logLine.innerText        = `Procesando ${CONCURRENCY} segmentos en paralelo...`;
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker())
+  );
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   progressFill.style.width = '100%';
   logLine.innerText = '';
 
   // ── Cancelado sin resultados ───────────────────────────────────────────
-  if (cancelRequested && results.length === 0) {
+  if (cancelRequested && completed === 0) {
     progressSection.classList.remove('visible');
-    runBtn.disabled = false;
+    finishUI();
     showToast('⏹ Parafraseo cancelado.', 'info');
     return;
   }
 
-  // ── Todos fallaron → mostrar el error real ─────────────────────────────
+  // ── Todos fallaron ─────────────────────────────────────────────────────
   if (errorCount === total) {
     progressSection.classList.remove('visible');
-    runBtn.disabled = false;
+    finishUI();
     showErr(`Todos los segmentos fallaron. Detalle: ${firstError}`);
     return;
   }
@@ -639,10 +717,9 @@ async function startParaphrase() {
   const finalText = results.join('\n\n');
   outputTextarea.value   = finalText;
   originalTextarea.value = source;
-  statOrig.innerText     = countWords(source).toLocaleString('es');
-  statNew.innerText      = countWords(finalText).toLocaleString('es');
-  statChunks.innerText   = `${results.length - errorCount}/${total}`;
-  statSimilarity.innerText = calculateSimilarity(source, finalText) + '%';
+
+  statOrig.innerText   = countWords(source).toLocaleString('es');
+  statChunks.innerText = `${total - errorCount}/${total}`;
 
   progressLabel.innerText = cancelRequested
     ? `⏹ Cancelado tras ${elapsed}s — resultado parcial`
@@ -652,6 +729,10 @@ async function startParaphrase() {
 
   outputSection.classList.add('visible');
 
+  // Nueva versión + estadísticas (naturalidad, similitud, lectura)
+  addVersion(finalText, source, model);
+
+  // ── Avisos ─────────────────────────────────────────────────────────────
   if (errorCount > 0) {
     showErr(`⚠️ ${errorCount} de ${total} segmento(s) fallaron (${firstError}). El texto original fue conservado en esas secciones.`);
   }
@@ -659,23 +740,96 @@ async function startParaphrase() {
     showToast(`⚠️ ${truncatedCount} segmento(s) se cortaron por longitud.`, 'info');
   }
 
+  // ── Historial ──────────────────────────────────────────────────────────
   saveToHistory({
     date: new Date().toISOString(),
-    tone, intensity, model,
+    tone, model,
     originalWords: countWords(source),
     newWords: countWords(finalText),
-    similarity: calculateSimilarity(source, finalText),
+    similarity: versions[0].similarity,
+    naturalness: versions[0].naturalness,
+    original: source.slice(0, 60000),
+    text: finalText.slice(0, 60000),
     preview: finalText.substring(0, 120) + '...'
   });
   renderHistory();
 
-  runBtn.disabled = false;
+  finishUI();
 }
 
-// ─── Modo comparación lado a lado ─────────────────────────────────────────────
+function finishUI() {
+  processing = false;
+  runBtn.disabled = false;
+  genVersionBtn.disabled = false;
+}
+
+// ─── Versiones (hasta 3) ──────────────────────────────────────────────────────
+function addVersion(text, source, model) {
+  const words = countWords(text);
+  const version = {
+    text,
+    words,
+    similarity: calculateSimilarity(source, text),
+    naturalness: calculateNaturalness(text),
+    readtime: Math.max(1, Math.ceil(words / 200)),
+    model
+  };
+
+  versions.unshift(version);
+  if (versions.length > 3) versions.pop();
+  currentVersionIdx = 0;
+
+  outputTextarea.value = version.text;
+  applyVersionStats(version);
+  renderVersions();
+}
+
+function applyVersionStats(v) {
+  statNew.innerText          = v.words.toLocaleString('es');
+  statSimilarity.innerText   = v.similarity + '%';
+  statNaturalness.innerText  = v.naturalness + '%';
+  statReadtime.innerText     = v.readtime + ' min';
+
+  colorStat(statNaturalness, v.naturalness >= 70 ? 'good' : v.naturalness >= 45 ? 'warn' : 'bad');
+  colorStat(statSimilarity, v.similarity <= 60 ? 'good' : v.similarity <= 85 ? 'warn' : 'bad');
+
+  // Alerta de similitud alta (riesgo de detección)
+  if (v.similarity > 85) {
+    similarityAlertVal.innerText = v.similarity;
+    similarityAlert.hidden = false;
+  } else {
+    similarityAlert.hidden = true;
+  }
+}
+
+function colorStat(el, level) {
+  el.classList.remove('stat-good', 'stat-warn', 'stat-bad');
+  el.classList.add('stat-' + level);
+}
+
+function renderVersions() {
+  versionsBar.hidden = versions.length === 0;
+  versionsPills.innerHTML = versions.map((v, i) => `
+    <button class="version-pill ${i === currentVersionIdx ? 'active' : ''}"
+            data-idx="${i}" type="button"
+            title="${MODEL_LABELS[v.model] || v.model} · ${v.words} palabras · Naturalidad ${v.naturalness}%">
+      V${i + 1}${i === 0 ? ' ✨' : ''}
+    </button>`).join('');
+}
+
+function selectVersion(idx) {
+  if (idx < 0 || idx >= versions.length) return;
+  currentVersionIdx = idx;
+  outputTextarea.value = versions[idx].text;
+  applyVersionStats(versions[idx]);
+  renderVersions();
+  showToast(`Versión V${idx + 1} cargada.`, 'info');
+}
+
+// ─── Comparación lado a lado ──────────────────────────────────────────────────
 function toggleCompare() {
   if (!lastOriginalText) {
-    showToast('Primero genera un parafraseo para poder comparar.', 'info');
+    showToast('Primero genera un parafraseo para comparar.', 'info');
     return;
   }
   const active = outputCompare.classList.toggle('side-by-side');
@@ -685,13 +839,11 @@ function toggleCompare() {
   if (active) originalTextarea.value = lastOriginalText;
 }
 
-// ─── Historial local (ahora visible) ──────────────────────────────────────────
+// ─── Historial (clicable) ─────────────────────────────────────────────────────
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem('parafrase_history') || '[]');
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 function saveToHistory(entry) {
@@ -701,12 +853,13 @@ function saveToHistory(entry) {
     if (history.length > 10) history.pop();
     localStorage.setItem('parafrase_history', JSON.stringify(history));
   } catch (e) {
-    console.warn('No se pudo guardar historial:', e);
+    // Cuota llena: elimina los más antiguos y reintenta una vez
+    try {
+      const history = getHistory().slice(0, 3);
+      history.unshift(entry);
+      localStorage.setItem('parafrase_history', JSON.stringify(history));
+    } catch { console.warn('No se pudo guardar historial:', e); }
   }
-}
-
-function loadHistory() {
-  paraphraseHistory = getHistory();
 }
 
 function renderHistory() {
@@ -716,21 +869,45 @@ function renderHistory() {
 
   historyList.innerHTML = history.map((h, idx) => {
     const date = new Date(h.date).toLocaleString('es', {
-      day: '2-digit', month: 'short',
-      hour: '2-digit', minute: '2-digit'
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
     });
     return `
-      <div class="history-item" style="animation-delay:${idx * 0.05}s">
+      <div class="history-item" data-idx="${idx}" style="animation-delay:${idx * 0.04}s"
+           title="Clic para recuperar este parafraseo" role="button" tabindex="0">
         <div class="history-item-head">
           <span>${date}</span>
           <span class="badge">${TONE_LABELS[h.tone] || h.tone}</span>
           <span class="badge">${MODEL_LABELS[h.model] || h.model}</span>
           <span class="badge">${h.originalWords}→${h.newWords} palabras</span>
           <span class="badge">Similitud ${h.similarity}%</span>
+          ${h.naturalness ? `<span class="badge">Naturalidad ${h.naturalness}%</span>` : ''}
         </div>
         <p class="history-preview">${escapeHtml(h.preview || '')}</p>
       </div>`;
   }).join('');
+}
+
+function loadHistoryItem(idx) {
+  const history = getHistory();
+  const h = history[idx];
+  if (!h || !h.text) { showToast('Esa entrada del historial no tiene texto guardado.', 'error'); return; }
+
+  lastOriginalText = h.original || '';
+  originalTextarea.value = lastOriginalText;
+  outputTextarea.value = h.text;
+  outputSection.classList.add('visible');
+
+  statOrig.innerText       = (h.originalWords || 0).toLocaleString('es');
+  statNew.innerText        = (h.newWords || 0).toLocaleString('es');
+  statChunks.innerText     = '—';
+  statSimilarity.innerText = (h.similarity ?? 0) + '%';
+  statNaturalness.innerText = (h.naturalness ?? 0) + '%';
+  statReadtime.innerText   = Math.max(1, Math.ceil((h.newWords || 0) / 200)) + ' min';
+  similarityAlert.hidden   = (h.similarity ?? 0) <= 85;
+  if (!similarityAlert.hidden) similarityAlertVal.innerText = h.similarity;
+
+  showToast('🕘 Parafraseo del historial recuperado.');
+  window.scrollTo({ top: outputSection.offsetTop - 20, behavior: 'smooth' });
 }
 
 function clearHistory() {
@@ -739,7 +916,7 @@ function clearHistory() {
   showToast('🗑 Historial borrado.', 'info');
 }
 
-// ─── Copiar al portapapeles ───────────────────────────────────────────────────
+// ─── Copiar ───────────────────────────────────────────────────────────────────
 async function copyOutput() {
   const text = outputTextarea.value;
   if (!text) return;
@@ -754,14 +931,11 @@ async function copyOutput() {
   }
 }
 
-// ─── Descarga DOCX ────────────────────────────────────────────────────────────
+// ─── Exportar DOCX ────────────────────────────────────────────────────────────
 async function downloadAsDocx() {
   const text = outputTextarea.value;
   if (!text) { showErr('No hay texto para descargar.'); return; }
-  if (!isDocxAvailable()) {
-    showErr('❌ La librería DOCX no está cargada. Recarga la página.');
-    return;
-  }
+  if (!isDocxAvailable()) { showErr('❌ La librería DOCX no está cargada. Recarga la página.'); return; }
 
   try {
     const { Document, Packer, Paragraph, TextRun, AlignmentType } = docx;
@@ -775,9 +949,8 @@ async function downloadAsDocx() {
          (trimmed === trimmed.toUpperCase() && trimmed.length < 50 && !trimmed.endsWith('.')));
 
       if (lineIsTitle) {
-        const cleanTitle = trimmed.replace(/^#+\s*/, '');
         paragraphs.push(new Paragraph({
-          children: [new TextRun({ text: cleanTitle, bold: true, size: 28, font: 'Arial', color: '1a1a1a' })],
+          children: [new TextRun({ text: trimmed.replace(/^#+\s*/, ''), bold: true, size: 28, font: 'Arial', color: '1a1a1a' })],
           spacing: { before: 280, after: 140 },
           alignment: AlignmentType.LEFT
         }));
@@ -800,14 +973,7 @@ async function downloadAsDocx() {
     });
 
     const blob = await Packer.toBlob(docxDoc);
-    const url  = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href  = url;
-    link.download = `parafraseado_${new Date().toISOString().slice(0, 10)}.docx`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    triggerDownload(blob, `parafraseado_${new Date().toISOString().slice(0, 10)}.docx`);
     showToast('📥 Documento DOCX descargado');
   } catch (error) {
     console.error('Error en downloadAsDocx:', error);
@@ -815,20 +981,66 @@ async function downloadAsDocx() {
   }
 }
 
-// ─── Descarga TXT ─────────────────────────────────────────────────────────────
+// ─── Exportar PDF (vía ventana de impresión) ─────────────────────────────────
+function downloadAsPdf() {
+  const text = outputTextarea.value;
+  if (!text) { showErr('No hay texto para exportar.'); return; }
+
+  const lines = text.split(/\r?\n/);
+  const bodyHtml = lines.map(line => {
+    const t = line.trim();
+    if (!t) return '';
+    const lineIsTitle = t.startsWith('#') ||
+      (t === t.toUpperCase() && t.length < 50 && !t.endsWith('.'));
+    if (lineIsTitle) return `<h2>${escapeHtml(t.replace(/^#+\s*/, ''))}</h2>`;
+    return `<p>${escapeHtml(line)}</p>`;
+  }).join('');
+
+  const win = window.open('', '_blank');
+  if (!win) {
+    showErr('El navegador bloqueó la ventana emergente. Permite ventanas emergentes para exportar PDF.');
+    return;
+  }
+
+  win.document.write(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Documento parafraseado</title>
+  <style>
+    body { font-family: Georgia, 'Times New Roman', serif; max-width: 720px; margin: 48px auto;
+           padding: 0 24px; line-height: 1.9; font-size: 15px; color: #1a1a1a; }
+    h2 { font-family: Arial, sans-serif; font-size: 17px; margin: 28px 0 12px; }
+    p { margin: 0 0 14px; text-align: justify; }
+    @media print { body { margin: 0; max-width: none; } }
+  </style>
+</head>
+<body>${bodyHtml}</body>
+</html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 400);
+  showToast('📑 Abriendo vista de impresión → elige «Guardar como PDF».', 'info');
+}
+
+// ─── Exportar TXT ─────────────────────────────────────────────────────────────
 function downloadAsTxt() {
   const text = outputTextarea.value;
   if (!text) return;
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `parafraseado_${new Date().toISOString().slice(0, 10)}.txt`;
+  triggerDownload(blob, `parafraseado_${new Date().toISOString().slice(0, 10)}.txt`);
+  showToast('📄 Archivo TXT descargado');
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('📄 Archivo TXT descargado');
 }
 
 // ─── Reset ────────────────────────────────────────────────────────────────────
@@ -843,8 +1055,14 @@ function resetAll() {
   extractedText = '';
   lastOriginalText = '';
   cancelRequested = false;
+  versions = [];
+  currentVersionIdx = -1;
+  versionsBar.hidden = true;
+  versionsPills.innerHTML = '';
+  similarityAlert.hidden = true;
   showErr('');
   logLine.innerText = '';
+  estTimeEl.innerText = '';
   outputCompare.classList.remove('side-by-side');
   compareOriginalPane.hidden = true;
   compareBtn.classList.remove('active');

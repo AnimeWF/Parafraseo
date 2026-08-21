@@ -2,11 +2,10 @@
 //  ParafraseAI · API Serverless (Vercel)
 //  Endpoint: /api/paraphrase
 //
-//  GET  → Diagnóstico: valida tu clave y lista los modelos disponibles
-//  POST → Parafrasea el texto enviado
-//
-//  Optimizado para modelos GRATUITOS: GPT-OSS 120B/20B y Qwen 3.6 27B.
-//  (Los GPT-OSS necesitan temperature 1.0 / top_p 1.0, sus valores de entreno)
+//  GET  → Diagnóstico: valida la clave y lista los modelos disponibles
+//  POST → Parafrasea con opciones avanzadas:
+//         · humanize (anti-IA con lista negra de frases)
+//         · audience (público objetivo) · length (longitud) · form (tratamiento)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TONES = {
@@ -28,22 +27,75 @@ const PRESERVE_RULES = {
   technical: '- Mantén los términos técnicos, siglas y nombres propios sin usar sinónimos.\n'
 };
 
-function buildPrompt(text, tone, intensity, preserve) {
+const AUDIENCES = {
+  general: 'vocabulario accesible y claro, apropiado para público general',
+  experto: 'vocabulario técnico y preciso, apropiado para especialistas en el tema',
+  estudiante: 'lenguaje claro, didáctico y fácil de comprender para estudiantes'
+};
+
+const LENGTHS = {
+  resumir: 'Reduce la extensión aproximadamente un 30 %, conservando todas las ideas clave.',
+  igual: 'Mantén una extensión similar a la del original.',
+  expandir: 'Amplía la extensión aproximadamente un 30 %, desarrollando las ideas sin inventar información nueva.'
+};
+
+const FORMS = {
+  usted: 'Usa tratamiento de usted en todo el texto.',
+  tu: 'Usa tratamiento de tú en todo el texto.',
+  impersonal: 'Redacta en forma impersonal (ej.: "se observa", "se considera", "se puede afirmar").'
+};
+
+// Lista negra de expresiones típicas de IA
+const BANNED_PHRASES = [
+  'en conclusión', 'cabe destacar', 'cabe señalar', 'es importante mencionar',
+  'es importante destacar', 'en la actualidad', 'sin duda', 'en este sentido',
+  'juega un papel crucial', 'es fundamental', 'hoy en día', 'en el mundo actual',
+  'resulta evidente', 'es menester', 'en resumen', 'asimismo', 'del mismo modo',
+  'de igual manera', 'por otro lado', 'en primer lugar', 'en segundo lugar',
+  'finalmente', 'no cabe duda', 'vale la pena', 'en pocas palabras'
+];
+
+function buildPrompt(text, opts) {
+  let rules = '';
+  let n = 1;
+
+  rules += `${n++}. Tono: ${TONES[opts.tone] || TONES.natural}.\n`;
+  rules += `${n++}. Intensidad: ${INTENSITY_TEXT[opts.intensity] || INTENSITY_TEXT[2]}.\n`;
+
+  if (opts.audience && AUDIENCES[opts.audience]) {
+    rules += `${n++}. Público objetivo: usa ${AUDIENCES[opts.audience]}.\n`;
+  }
+  if (opts.length && LENGTHS[opts.length]) {
+    rules += `${n++}. Extensión: ${LENGTHS[opts.length]}\n`;
+  }
+  if (opts.form && FORMS[opts.form]) {
+    rules += `${n++}. Tratamiento: ${FORMS[opts.form]}\n`;
+  }
+
   let preserveRules = '';
-  for (const key of preserve) {
+  for (const key of opts.preserve || []) {
     if (PRESERVE_RULES[key]) preserveRules += PRESERVE_RULES[key];
+  }
+
+  // Modo humanizar: ritmo natural + lista negra de frases IA
+  let humanizeRules = '';
+  if (opts.humanize) {
+    humanizeRules = `
+REGLAS DE HUMANIZACIÓN (OBLIGATORIAS):
+- Varía la longitud de las oraciones: alterna frases cortas y directas con otras más largas. El ritmo debe sentirse natural e irregular, como escrito por una persona.
+- PROHIBIDO usar estas expresiones típicas de IA: ${BANNED_PHRASES.map(p => `"${p}"`).join(', ')}.
+- No empieces oraciones consecutivas con la misma palabra ni uses el mismo conector varias veces.
+- Escribe en prosa fluida; evita listas y estructuras repetitivas.
+- Prefiere construcciones sencillas y directas antes que subordinadas largas.`;
   }
 
   return `Eres un parafraseador profesional en español con amplia experiencia en reescritura de textos. Tu tarea es reescribir ÚNICAMENTE los párrafos de contenido, respetando siempre los títulos.
 
 REGLAS OBLIGATORIAS:
-1. Tono: ${TONES[tone] || TONES.natural}.
-2. Intensidad: ${INTENSITY_TEXT[intensity] || INTENSITY_TEXT[2]}.
-${preserveRules}3. NO añadas comentarios, explicaciones, introducciones ni prefijos como "Aquí el texto:" o "Paráfrasis:".
-4. NO uses frases como "En resumen", "Para concluir", "En síntesis" al final.
-5. Devuelve SOLO el texto reescrito, manteniendo la misma estructura de líneas y párrafos.
-6. Los títulos y encabezados deben aparecer idénticos al original.
-7. Mantén la coherencia y cohesión entre párrafos.
+${rules}${preserveRules}${n++}. NO añadas comentarios, explicaciones, introducciones ni prefijos como "Aquí el texto:" o "Paráfrasis:".
+${n++}. Devuelve SOLO el texto reescrito, manteniendo la misma estructura de líneas y párrafos.
+${n++}. Los títulos y encabezados deben aparecer idénticos al original.
+${n++}. Mantén la coherencia y cohesión entre párrafos.${humanizeRules}
 
 TEXTO A PARAFRASEAR:
 ${text}`;
@@ -85,12 +137,7 @@ export default async function handler(req, res) {
       }
 
       const models = (data.data || []).map(m => m.id).sort();
-      return res.status(200).json({
-        status: 'ok',
-        keyValid: true,
-        modelCount: models.length,
-        models
-      });
+      return res.status(200).json({ status: 'ok', keyValid: true, modelCount: models.length, models });
     } catch (e) {
       return res.status(500).json({ status: 'error', error: 'No se pudo contactar a Groq: ' + e.message });
     }
@@ -102,7 +149,8 @@ export default async function handler(req, res) {
   }
 
   // ── POST: Parafrasear ───────────────────────────────────────────────────
-  const { text, tone, intensity, preserve, model } = req.body || {};
+  const body = req.body || {};
+  const { text, tone, intensity, preserve, model, humanize, audience, length, form } = body;
 
   if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Falta el texto o está vacío.' });
@@ -111,26 +159,27 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres por segmento).' });
   }
 
-  // Sanitizar el nombre del modelo
+  // Sanitizar y validar todas las opciones
   const modelName = typeof model === 'string' && /^[a-zA-Z0-9._\/-]{1,80}$/.test(model)
     ? model
     : 'openai/gpt-oss-20b';
 
-  const safeTone      = TONES[tone] ? tone : 'natural';
-  const safeIntensity = [1, 2, 3].includes(Number(intensity)) ? Number(intensity) : 2;
-  const safePreserve  = Array.isArray(preserve)
-    ? preserve.filter(k => PRESERVE_RULES[k])
-    : ['titles', 'numbers'];
+  const opts = {
+    tone: TONES[tone] ? tone : 'natural',
+    intensity: [1, 2, 3].includes(Number(intensity)) ? Number(intensity) : 2,
+    preserve: Array.isArray(preserve) ? preserve.filter(k => PRESERVE_RULES[k]) : ['titles', 'numbers'],
+    humanize: Boolean(humanize),
+    audience: AUDIENCES[audience] ? audience : null,
+    length: LENGTHS[length] ? length : null,
+    form: FORMS[form] ? form : null
+  };
 
-  // ── Parámetros según el modelo ──────────────────────────────────────────
-  // Los modelos GPT-OSS fueron entrenados con temperature 1.0 y top_p 1.0;
-  // usar otros valores degrada la calidad de la respuesta.
-  const isGptOss    = modelName.startsWith('openai/gpt-oss');
-  const tempValue   = isGptOss ? 1.0 : [0.3, 0.7, 1.0][safeIntensity - 1];
-  const topPValue   = isGptOss ? 1.0 : 0.9;
-  const maxTokens   = 4096;
+  // Los modelos GPT-OSS fueron entrenados con temperature 1.0 / top_p 1.0
+  const isGptOss  = modelName.startsWith('openai/gpt-oss');
+  const tempValue = isGptOss ? 1.0 : [0.3, 0.7, 1.0][opts.intensity - 1];
+  const topPValue = isGptOss ? 1.0 : 0.9;
 
-  const prompt = buildPrompt(text.trim(), safeTone, safeIntensity, safePreserve);
+  const prompt = buildPrompt(text.trim(), opts);
 
   try {
     const controller = new AbortController();
@@ -142,13 +191,13 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'User-Agent': 'ParafraseAI/4.0'
+        'User-Agent': 'ParafraseAI/5.0'
       },
       body: JSON.stringify({
         model: modelName,
         messages: [{ role: 'user', content: prompt }],
         temperature: tempValue,
-        max_tokens: maxTokens,
+        max_tokens: 4096,
         top_p: topPValue,
         stream: false
       })
@@ -163,7 +212,7 @@ export default async function handler(req, res) {
 
       if (response.status === 429) {
         return res.status(429).json({
-          error: 'Límite diario/horario de Groq alcanzado. Espera unos minutos.',
+          error: 'Límite de Groq alcanzado. Espera unos minutos o cambia a GPT-OSS 20B.',
           retryAfter: 30
         });
       }
