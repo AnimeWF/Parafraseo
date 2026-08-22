@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ParafraseAI · Parafraseador Inteligente</title>
-  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA. Modo humanizar anti-detección, títulos preservados y documentos largos.">
+  <meta name="description" content="Parafrasea PDF, DOCX y TXT con IA. Modo humanizar anti-detección, protección de citas APA y documentos largos.">
   <meta name="author" content="Jaime Wong Franco">
   <meta name="theme-color" content="#0d0f14">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8D%EF%B8%8F%3C/text%3E%3C/svg%3E">
@@ -20,10 +20,9 @@
 <body>
   <main class="app">
 
-    <!-- ═══════════ Header ═══════════ -->
     <header class="header">
       <h1>✍️ ParafraseAI</h1>
-      <p>Parafraseador profesional con modo humanizar y preservación de estructura</p>
+      <p>Parafraseador profesional con modo humanizar y protección de citas</p>
     </header>
 
     <!-- ═══════════ Documento ═══════════ -->
@@ -89,6 +88,11 @@
         </div>
       </div>
 
+      <!-- B1: Contador de cuota (aparece tras el primer parafraseo) -->
+      <div class="quota-line" id="quota-line" hidden>
+        📊 <span id="quota-text">—</span>
+      </div>
+
       <div class="intensity-row">
         <label for="intensity">Intensidad del parafraseo <span id="intensity-val">Medio</span></label>
         <input type="range" id="intensity" min="1" max="3" step="1" value="2">
@@ -123,7 +127,7 @@
         <div class="opt-group">
           <label for="form-select">Tratamiento</label>
           <select id="form-select">
-            <option value="neutral" selected>▪️ Neutro / impersonal por defecto</option>
+            <option value="neutral" selected>▪️ Neutro por defecto</option>
             <option value="usted">🤝 Usted</option>
             <option value="tu">👋 Tú</option>
             <option value="impersonal">📋 Impersonal («se observa…»)</option>
@@ -142,10 +146,22 @@
         </button>
       </div>
 
+      <!-- A3: Auto-humanizar -->
+      <div class="switch-row">
+        <div class="switch-info">
+          <span class="switch-label">🎯 Auto-humanizar</span>
+          <span class="switch-desc">Si la naturalidad sale menor a 70%, genera automáticamente una segunda versión mejorada (usa 1 pasada extra)</span>
+        </div>
+        <button class="switch active" id="chip-autohumanize" role="switch" aria-checked="true" type="button" aria-label="Activar auto-humanizar">
+          <span class="switch-thumb"></span>
+        </button>
+      </div>
+
       <div class="card-title card-title-sub">🧩 Preservar elementos</div>
       <div class="preserve-row" id="preserve-chips">
         <button class="toggle-chip active" data-key="titles" aria-pressed="true" type="button">📌 Títulos/encabezados</button>
         <button class="toggle-chip active" data-key="numbers" aria-pressed="true" type="button">🔢 Números y fechas</button>
+        <button class="toggle-chip active" data-key="quotes" aria-pressed="true" type="button">📚 Citas y referencias</button>
         <button class="toggle-chip" data-key="technical" aria-pressed="false" type="button">⚙️ Términos técnicos</button>
       </div>
 
@@ -176,6 +192,7 @@
         <div class="card-title card-title-inline">📝 Resultado</div>
         <div class="output-actions">
           <button class="icon-btn" id="compare-btn" aria-pressed="false" type="button" title="Ver original y resultado lado a lado">🔀 Comparar</button>
+          <button class="icon-btn" id="repara-btn" type="button" title="Selecciona un párrafo del resultado y pulsa aquí para re-parafrasear solo ese párrafo">✂️ Re-parafrasear selección</button>
           <button class="icon-btn" id="copy-btn" type="button">📋 Copiar</button>
           <button class="icon-btn" id="download-docx-btn" type="button">📥 DOCX</button>
           <button class="icon-btn" id="download-pdf-btn" type="button">📑 PDF</button>
@@ -184,19 +201,17 @@
         </div>
       </div>
 
-      <!-- Versiones -->
       <div class="versions-bar" id="versions-bar" hidden>
         <div class="versions-pills" id="versions-pills"></div>
         <button class="icon-btn" id="gen-version-btn" type="button" title="Volver a parafrasear el mismo texto con la configuración actual">🎲 Generar otra versión</button>
       </div>
 
-      <!-- Alerta de similitud alta -->
       <div class="alert-box" id="similarity-alert" hidden>
         ⚠️ Similitud muy alta con el original (<strong><span id="similarity-alert-val"></span>%</strong>).
         Para reducir el riesgo de detección: sube la intensidad a «Agresivo», activa «Humanizar» y pulsa 🎲 Generar otra versión.
       </div>
 
-      <div class="stats-row stats-row-6">
+      <div class="stats-row stats-auto">
         <div class="stat-card">
           <span class="stat-val" id="stat-orig">—</span>
           <span class="stat-label">Palabras orig.</span>
@@ -216,6 +231,10 @@
         <div class="stat-card" title="Estimación basada en ritmo de frases y expresiones típicas de IA">
           <span class="stat-val" id="stat-naturalness">—</span>
           <span class="stat-label">Naturalidad</span>
+        </div>
+        <div class="stat-card" title="Legibilidad Fernández-Huerta (español)">
+          <span class="stat-val" id="stat-readability">—</span>
+          <span class="stat-label" id="readability-label">Legibilidad</span>
         </div>
         <div class="stat-card">
           <span class="stat-val" id="stat-readtime">—</span>
@@ -244,7 +263,6 @@
       <div id="history-list" class="history-list"></div>
     </section>
 
-    <!-- ═══════════ Footer ═══════════ -->
     <footer class="footer">
       ✨ Hecho por <strong>Jaime Wong Franco</strong> ·
       <a href="https://github.com/jswongfranco/Parafraseo" target="_blank" rel="noopener">GitHub</a> ·
@@ -252,10 +270,8 @@
     </footer>
   </main>
 
-  <!-- Notificaciones toast -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- Librerías para leer PDF, DOCX y generar DOCX -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>

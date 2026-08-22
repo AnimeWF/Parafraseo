@@ -1,12 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ParafraseAI · Frontend Profesional
+//  ParafraseAI · Frontend Profesional — FASE 4
 //  by Jaime Wong Franco
 //
-//  · Modo humanizar + puntuación de naturalidad
-//  · Público objetivo, longitud y tratamiento
-//  · Hasta 3 versiones del mismo texto (🎲)
-//  · Documentos largos: 40 segmentos, paralelo (2 a la vez), tiempo estimado
-//  · Alerta de similitud alta, exportar PDF, historial clicable
+//  Fase 4 añade: protección de citas (A1), re-parafrasear selección (A2),
+//  auto-humanizar (A3), contador de cuota (B1) y legibilidad Fernández-Huerta (B3).
 // ═══════════════════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -46,17 +43,22 @@ const originalTextarea = document.getElementById('original-textarea');
 const outputCompare    = document.getElementById('output-compare');
 const compareOriginalPane = document.getElementById('compare-original-pane');
 const compareBtn       = document.getElementById('compare-btn');
+const reparaBtn        = document.getElementById('repara-btn');
 const statOrig         = document.getElementById('stat-orig');
 const statNew          = document.getElementById('stat-new');
 const statChunks       = document.getElementById('stat-chunks');
 const statSimilarity   = document.getElementById('stat-similarity');
 const statNaturalness  = document.getElementById('stat-naturalness');
 const statReadtime     = document.getElementById('stat-readtime');
+const statReadability  = document.getElementById('stat-readability');
+const readabilityLabelEl = document.getElementById('readability-label');
 const similarityAlert  = document.getElementById('similarity-alert');
 const similarityAlertVal = document.getElementById('similarity-alert-val');
 const versionsBar      = document.getElementById('versions-bar');
 const versionsPills    = document.getElementById('versions-pills');
 const genVersionBtn    = document.getElementById('gen-version-btn');
+const quotaLine        = document.getElementById('quota-line');
+const quotaText        = document.getElementById('quota-text');
 const errMsg           = document.getElementById('err-msg');
 const progressFill     = document.getElementById('progress-fill');
 const progressLabel    = document.getElementById('progress-label');
@@ -75,6 +77,7 @@ const audienceSelect   = document.getElementById('audience-select');
 const lengthSelect     = document.getElementById('length-select');
 const formSelect       = document.getElementById('form-select');
 const chipHumanize     = document.getElementById('chip-humanize');
+const chipAutoHumanize = document.getElementById('chip-autohumanize');
 const historySection   = document.getElementById('history-section');
 const historyList      = document.getElementById('history-list');
 const clearHistoryBtn  = document.getElementById('clear-history-btn');
@@ -88,21 +91,20 @@ let modelsReady       = false;
 let currentAbort      = null;
 let cancelRequested   = false;
 let processing        = false;
-let versions          = [];   // [{ text, words, similarity, naturalness, readtime, model }]
+let versions          = [];
 let currentVersionIdx = -1;
 
 const MAX_FILE_SIZE_MB = 5;
-const MAX_CHUNKS       = 40;  // hasta ~22.000 palabras / ~60 páginas
-const CONCURRENCY      = 2;   // segmentos procesados en paralelo
+const MAX_CHUNKS       = 40;
+const CONCURRENCY      = 2;
+const NATURALNESS_THRESHOLD = 70; // disparo del auto-humanizar
 
-// Segundos estimados por segmento según modelo
 const MODEL_SECONDS = {
   'openai/gpt-oss-120b': 20,
   'openai/gpt-oss-20b': 6,
   'qwen/qwen3.6-27b': 10
 };
 
-// ─── Modelos preferidos (los gratuitos de tu cuenta primero) ─────────────────
 const PREFERRED_MODELS = [
   { id: 'openai/gpt-oss-120b',     label: '🚀 GPT-OSS 120B (mejor calidad)' },
   { id: 'qwen/qwen3.6-27b',        label: '⚖️ Qwen 3.6 27B (equilibrado)' },
@@ -125,7 +127,6 @@ const MODEL_LABELS = {
   'qwen/qwen3.6-27b': 'Qwen 3.6 27B'
 };
 
-// Expresiones típicas de IA (para la puntuación de naturalidad)
 const AI_PHRASES = [
   'en conclusión', 'cabe destacar', 'cabe señalar', 'es importante mencionar',
   'es importante destacar', 'en la actualidad', 'sin duda', 'en este sentido',
@@ -137,9 +138,9 @@ const AI_PHRASES = [
 
 const SAMPLE_TEXT = `LA IMPORTANCIA DE LA LECTURA EN LA ERA DIGITAL
 
-La lectura sigue siendo una de las herramientas más poderosas para el desarrollo del pensamiento crítico. Según un estudio publicado en 2023, los jóvenes que leen al menos 30 minutos al día muestran una comprensión lectora un 45 % superior a la media.
+La lectura sigue siendo una de las herramientas más poderosas para el desarrollo del pensamiento crítico. Según un estudio publicado en 2023 (García & López, 2023), los jóvenes que leen al menos 30 minutos al día muestran una comprensión lectora un 45 % superior a la media.
 
-Sin embargo, las pantallas han transformado nuestros hábitos. Hoy dedicamos un promedio de 7 horas diarias a dispositivos electrónicos, y la lectura profunda está en claro declive.
+Como señala el autor: "la lectura profunda es la base del pensamiento crítico" (p. 42). Sin embargo, las pantallas han transformado nuestros hábitos. Hoy dedicamos un promedio de 7 horas diarias a dispositivos electrónicos, y la lectura profunda está en claro declive.
 
 Los especialistas recomiendan recuperar espacios de lectura sin interrupciones, aunque sea en bloques breves, para fortalecer la concentración y la memoria a largo plazo.`;
 
@@ -153,6 +154,7 @@ function init() {
   cancelBtn.addEventListener('click', cancelParaphrase);
   copyBtn.addEventListener('click', copyOutput);
   compareBtn.addEventListener('click', toggleCompare);
+  reparaBtn.addEventListener('click', reparaSelection);
   genVersionBtn.addEventListener('click', generateAnotherVersion);
   downloadDocxBtn.addEventListener('click', downloadAsDocx);
   downloadPdfBtn.addEventListener('click', downloadAsPdf);
@@ -162,10 +164,8 @@ function init() {
   clearHistoryBtn.addEventListener('click', clearHistory);
   intensitySlider.addEventListener('input', (e) => updateIntensity(e.target.value));
 
-  chipHumanize.addEventListener('click', () => {
-    chipHumanize.classList.toggle('active');
-    chipHumanize.setAttribute('aria-checked', String(chipHumanize.classList.contains('active')));
-  });
+  chipHumanize.addEventListener('click', () => toggleSwitch(chipHumanize));
+  chipAutoHumanize.addEventListener('click', () => toggleSwitch(chipAutoHumanize));
 
   document.querySelectorAll('#preserve-chips .toggle-chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -190,14 +190,12 @@ function init() {
     if (files[0]) handleFile(files[0]);
   });
 
-  // Selección de versiones (delegación)
   versionsPills.addEventListener('click', (e) => {
     const pill = e.target.closest('.version-pill');
     if (!pill) return;
     selectVersion(parseInt(pill.dataset.idx, 10));
   });
 
-  // Historial clicable (delegación)
   historyList.addEventListener('click', (e) => {
     const item = e.target.closest('.history-item');
     if (!item) return;
@@ -221,6 +219,11 @@ function init() {
   updateIntensity(intensitySlider.value);
   renderHistory();
   loadAvailableModels();
+}
+
+function toggleSwitch(el) {
+  el.classList.toggle('active');
+  el.setAttribute('aria-checked', String(el.classList.contains('active')));
 }
 
 function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
@@ -304,7 +307,7 @@ function loadSampleText() {
   textInput.value = SAMPLE_TEXT;
   autoGrow();
   updateTextCounter();
-  showToast('✨ Texto de ejemplo cargado.', 'info');
+  showToast('✨ Texto de ejemplo cargado (incluye una cita APA y una comilla para probar la protección).', 'info');
 }
 
 function switchMode(mode) {
@@ -354,6 +357,37 @@ function formatDuration(sec) {
   return s ? `~${m} min ${s} s` : `~${m} min`;
 }
 
+// ─── A1: Protección de citas y referencias ────────────────────────────────────
+// Reemplaza citas APA y texto entre comillas por marcadores ⟦Qn⟧ antes de
+// enviar a la IA, y los restaura después. Garantiza que queden intactas.
+function protectQuotations(text) {
+  const items = [];
+  let result = text;
+
+  // Referencias APA: (Apellido, 2020), (Apellido et al., 2020, p. 5)
+  result = result.replace(/\([^()\n]{1,80}?,\s*(19|20)\d{2}[a-z]?(?:,\s*(?:p|pp|cap|sec)\.?\s*[\d–\-]+)?\)/g, (m) => {
+    items.push(m);
+    return `⟦Q${items.length}⟧`;
+  });
+
+  // Comillas rectas, curvas y latinas
+  result = result.replace(/"[^"\n]{2,600}"/g, (m) => { items.push(m); return `⟦Q${items.length}⟧`; });
+  result = result.replace(/“[^”\n]{2,600}”/g, (m) => { items.push(m); return `⟦Q${items.length}⟧`; });
+  result = result.replace(/«[^»\n]{2,600}»/g, (m) => { items.push(m); return `⟦Q${items.length}⟧`; });
+
+  return { protectedText: result, items };
+}
+
+function restoreQuotations(text, items) {
+  let restored = text;
+  // Restaurar de mayor a menor índice (maneja citas anidadas dentro de comillas)
+  for (let i = items.length - 1; i >= 0; i--) {
+    const pattern = new RegExp(`⟦\\s*Q\\s*${i + 1}\\s*⟧`, 'g');
+    restored = restored.replace(pattern, () => items[i]);
+  }
+  return restored;
+}
+
 // ─── Similitud léxica (Jaccard) ───────────────────────────────────────────────
 function calculateSimilarity(text1, text2) {
   const words1 = new Set(text1.toLowerCase().split(/\W+/).filter(w => w.length > 3));
@@ -363,9 +397,7 @@ function calculateSimilarity(text1, text2) {
   return union.size === 0 ? 0 : Math.round((intersection.size / union.size) * 100);
 }
 
-// ─── Puntuación de naturalidad (heurística, sin costo extra) ─────────────────
-// Mide: variación en la longitud de frases (+), frases IA detectadas (−),
-// y repeticiones al inicio de oraciones (−).
+// ─── Puntuación de naturalidad ────────────────────────────────────────────────
 function calculateNaturalness(text) {
   const lower = text.toLowerCase();
   let bannedHits = 0;
@@ -396,6 +428,37 @@ function calculateNaturalness(text) {
   return Math.max(8, Math.min(97, Math.round(score)));
 }
 
+// ─── B3: Legibilidad Fernández-Huerta (español) ──────────────────────────────
+function countSyllables(word) {
+  const groups = word.toLowerCase().match(/[aeiouáéíóúü]+/g);
+  return groups ? groups.length : 1;
+}
+
+function fernandezHuerta(text) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length < 10) return null;
+  const sentences = text.split(/[.!?…]+/).filter(s => s.trim().length > 0);
+  if (sentences.length === 0) return null;
+
+  let totalSyllables = 0;
+  words.forEach(w => { totalSyllables += countSyllables(w); });
+
+  const syllPerWord = totalSyllables / words.length;
+  const wordsPerSentence = words.length / sentences.length;
+  const score = 206.84 - 60 * syllPerWord - 1.02 * wordsPerSentence;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function readabilityLabel(score) {
+  if (score >= 90) return 'Muy fácil';
+  if (score >= 80) return 'Fácil';
+  if (score >= 70) return 'Bastante fácil';
+  if (score >= 60) return 'Estándar';
+  if (score >= 50) return 'Algo difícil';
+  if (score >= 30) return 'Difícil';
+  return 'Muy difícil';
+}
+
 // ─── Manejo de archivos ───────────────────────────────────────────────────────
 async function handleFile(file) {
   if (!file) return;
@@ -406,7 +469,6 @@ async function handleFile(file) {
   }
 
   const ext = file.name.split('.').pop().toLowerCase();
-
   if (ext === 'doc') {
     showErr('El formato .doc antiguo no está soportado. Guarda tu archivo como .docx.');
     return;
@@ -469,7 +531,7 @@ function clearFile() {
   showErr('');
 }
 
-// ─── Chunking corregido ───────────────────────────────────────────────────────
+// ─── Chunking ─────────────────────────────────────────────────────────────────
 function isTitle(line) {
   const t = line.trim();
   if (!t) return false;
@@ -564,6 +626,13 @@ function cancelParaphrase() {
   logLine.innerText = 'Cancelando...';
 }
 
+// ─── B1: Contador de cuota ────────────────────────────────────────────────────
+function updateQuotaDisplay(remaining) {
+  quotaLine.hidden = false;
+  const icon = remaining > 100 ? '🟢' : remaining > 20 ? '🟡' : '🔴';
+  quotaText.innerText = `${icon} Te quedan ~${remaining} peticiones en tu cuota de Groq`;
+}
+
 // ─── Inicio del parafraseado ──────────────────────────────────────────────────
 async function startParaphrase() {
   if (processing || !modelsReady) return;
@@ -581,19 +650,15 @@ async function startParaphrase() {
   await runPipeline(source);
 }
 
-// 🎲 Generar otra versión del último texto
 async function generateAnotherVersion() {
   if (processing) return;
-  if (!lastOriginalText) {
-    showToast('Primero genera un parafraseo.', 'info');
-    return;
-  }
+  if (!lastOriginalText) { showToast('Primero genera un parafraseo.', 'info'); return; }
   showErr('');
   await runPipeline(lastOriginalText);
 }
 
 // ─── Pipeline principal ───────────────────────────────────────────────────────
-async function runPipeline(source) {
+async function runPipeline(source, options = {}) {
   const tone      = toneSelect.value;
   const intensity = parseInt(intensitySlider.value, 10);
   const model     = modelSelect.value;
@@ -602,6 +667,7 @@ async function runPipeline(source) {
   const audience  = audienceSelect.value;
   const length    = lengthSelect.value;
   const form      = formSelect.value;
+  const quotesOn  = preserve.includes('quotes');
 
   if (!model) { showErr('No hay ningún modelo disponible.'); return; }
 
@@ -613,7 +679,6 @@ async function runPipeline(source) {
     return;
   }
 
-  // ── Preparar UI de progreso ────────────────────────────────────────────
   processing      = true;
   cancelRequested = false;
   currentAbort    = new AbortController();
@@ -621,6 +686,7 @@ async function runPipeline(source) {
 
   runBtn.disabled = true;
   genVersionBtn.disabled = true;
+  reparaBtn.disabled = true;
   progressSection.classList.add('visible');
   outputSection.classList.remove('visible');
   progressFill.style.width = '0%';
@@ -628,7 +694,6 @@ async function runPipeline(source) {
     `<div class="chunk-dot" id="dot-${i}" title="Segmento ${i + 1}"></div>`
   ).join('');
 
-  // ── Tiempo estimado + sugerencia inteligente de modelo ────────────────
   const perSeg = MODEL_SECONDS[model] || 10;
   const estSeconds = Math.ceil((total / CONCURRENCY) * perSeg);
   estTimeEl.innerText = `🕐 Tiempo estimado: ${formatDuration(estSeconds)} · ${total} segmento(s) · ${CONCURRENCY} en paralelo`;
@@ -637,8 +702,9 @@ async function runPipeline(source) {
     showToast('💡 Documento largo: con GPT-OSS 20B irás más rápido y gastarás menos cuota diaria.', 'info');
   }
 
-  // ── Procesar en paralelo (pool de CONCURRENCY trabajadores) ───────────
   const opts = { tone, intensity, preserve, model, humanize, audience, length, form };
+  if (options.autoBoost) opts.boostHumanize = true;
+
   const results = new Array(chunks.length);
   let errorCount = 0, truncatedCount = 0, completed = 0;
   let firstError = '';
@@ -654,10 +720,15 @@ async function runPipeline(source) {
       if (dot) dot.classList.add('active');
 
       try {
+        // A1: proteger citas antes de enviar (si está activado)
+        const { protectedText, items } = quotesOn
+          ? protectQuotations(chunks[i])
+          : { protectedText: chunks[i], items: [] };
+
         const response = await fetchWithTimeout('/api/paraphrase', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: chunks[i], ...opts })
+          body: JSON.stringify({ text: protectedText, ...opts })
         }, 55000, 1);
 
         if (!response.ok) {
@@ -668,7 +739,17 @@ async function runPipeline(source) {
         const data = await response.json();
         if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
         if (data.truncated) truncatedCount++;
-        results[i] = data.paraphrased;
+
+        // B1: actualizar cuota si viene en la respuesta
+        if (data.quota && typeof data.quota.remainingRequests === 'number') {
+          updateQuotaDisplay(data.quota.remainingRequests);
+        }
+
+        // A1: restaurar las citas protegidas
+        results[i] = items.length
+          ? restoreQuotations(data.paraphrased, items)
+          : data.paraphrased;
+
         if (dot) { dot.classList.remove('active'); dot.classList.add('done'); }
       } catch (err) {
         if (cancelRequested || err.name === 'AbortError') {
@@ -677,7 +758,7 @@ async function runPipeline(source) {
         }
         errorCount++;
         if (!firstError) firstError = err.message || String(err);
-        results[i] = chunks[i]; // conservar original en segmentos fallidos
+        results[i] = chunks[i];
         if (dot) { dot.classList.remove('active'); dot.classList.add('error'); }
         console.error(`Error segmento ${i + 1}:`, err);
       }
@@ -697,7 +778,6 @@ async function runPipeline(source) {
   progressFill.style.width = '100%';
   logLine.innerText = '';
 
-  // ── Cancelado sin resultados ───────────────────────────────────────────
   if (cancelRequested && completed === 0) {
     progressSection.classList.remove('visible');
     finishUI();
@@ -705,7 +785,6 @@ async function runPipeline(source) {
     return;
   }
 
-  // ── Todos fallaron ─────────────────────────────────────────────────────
   if (errorCount === total) {
     progressSection.classList.remove('visible');
     finishUI();
@@ -713,7 +792,6 @@ async function runPipeline(source) {
     return;
   }
 
-  // ── Renderizar resultado ───────────────────────────────────────────────
   const finalText = results.join('\n\n');
   outputTextarea.value   = finalText;
   originalTextarea.value = source;
@@ -728,11 +806,8 @@ async function runPipeline(source) {
       : `✅ Parafraseado completado en ${elapsed}s`;
 
   outputSection.classList.add('visible');
-
-  // Nueva versión + estadísticas (naturalidad, similitud, lectura)
   addVersion(finalText, source, model);
 
-  // ── Avisos ─────────────────────────────────────────────────────────────
   if (errorCount > 0) {
     showErr(`⚠️ ${errorCount} de ${total} segmento(s) fallaron (${firstError}). El texto original fue conservado en esas secciones.`);
   }
@@ -740,7 +815,6 @@ async function runPipeline(source) {
     showToast(`⚠️ ${truncatedCount} segmento(s) se cortaron por longitud.`, 'info');
   }
 
-  // ── Historial ──────────────────────────────────────────────────────────
   saveToHistory({
     date: new Date().toISOString(),
     tone, model,
@@ -754,6 +828,21 @@ async function runPipeline(source) {
   });
   renderHistory();
 
+  // ── A3: Auto-humanizar ─────────────────────────────────────────────────
+  const nat = versions[0].naturalness;
+  const shouldAutoBoost =
+    !options.autoBoost &&
+    chipHumanize.classList.contains('active') &&
+    chipAutoHumanize.classList.contains('active') &&
+    nat < NATURALNESS_THRESHOLD;
+
+  if (shouldAutoBoost) {
+    showToast(`🎯 Naturalidad ${nat}% (baja). Generando automáticamente una versión más humana...`, 'info');
+    await sleep(700);
+    await runPipeline(source, { autoBoost: true });
+    return;
+  }
+
   finishUI();
 }
 
@@ -761,20 +850,12 @@ function finishUI() {
   processing = false;
   runBtn.disabled = false;
   genVersionBtn.disabled = false;
+  reparaBtn.disabled = false;
 }
 
-// ─── Versiones (hasta 3) ──────────────────────────────────────────────────────
+// ─── Versiones ────────────────────────────────────────────────────────────────
 function addVersion(text, source, model) {
-  const words = countWords(text);
-  const version = {
-    text,
-    words,
-    similarity: calculateSimilarity(source, text),
-    naturalness: calculateNaturalness(text),
-    readtime: Math.max(1, Math.ceil(words / 200)),
-    model
-  };
-
+  const version = computeStats(text, source, model);
   versions.unshift(version);
   if (versions.length > 3) versions.pop();
   currentVersionIdx = 0;
@@ -784,16 +865,39 @@ function addVersion(text, source, model) {
   renderVersions();
 }
 
+function computeStats(text, source, model) {
+  const words = countWords(text);
+  const readability = fernandezHuerta(text);
+  return {
+    text,
+    words,
+    similarity: calculateSimilarity(source, text),
+    naturalness: calculateNaturalness(text),
+    readability,
+    readtime: Math.max(1, Math.ceil(words / 200)),
+    model
+  };
+}
+
 function applyVersionStats(v) {
   statNew.innerText          = v.words.toLocaleString('es');
   statSimilarity.innerText   = v.similarity + '%';
   statNaturalness.innerText  = v.naturalness + '%';
   statReadtime.innerText     = v.readtime + ' min';
 
+  if (v.readability !== null) {
+    statReadability.innerText = v.readability;
+    readabilityLabelEl.innerText = readabilityLabel(v.readability);
+    colorStat(statReadability, v.readability >= 60 ? 'good' : v.readability >= 40 ? 'warn' : 'bad');
+  } else {
+    statReadability.innerText = '—';
+    readabilityLabelEl.innerText = 'Legibilidad';
+    statReadability.classList.remove('stat-good', 'stat-warn', 'stat-bad');
+  }
+
   colorStat(statNaturalness, v.naturalness >= 70 ? 'good' : v.naturalness >= 45 ? 'warn' : 'bad');
   colorStat(statSimilarity, v.similarity <= 60 ? 'good' : v.similarity <= 85 ? 'warn' : 'bad');
 
-  // Alerta de similitud alta (riesgo de detección)
   if (v.similarity > 85) {
     similarityAlertVal.innerText = v.similarity;
     similarityAlert.hidden = false;
@@ -826,6 +930,103 @@ function selectVersion(idx) {
   showToast(`Versión V${idx + 1} cargada.`, 'info');
 }
 
+// ─── A2: Re-parafrasear selección ─────────────────────────────────────────────
+function getSelectedParagraph() {
+  const text = outputTextarea.value;
+  let start = outputTextarea.selectionStart;
+  let end   = outputTextarea.selectionEnd;
+  if (start === end) return null;
+
+  // Expandir hasta los límites del párrafo
+  while (start > 0 && text[start - 1] !== '\n') start--;
+  while (end < text.length && text[end] !== '\n') end++;
+
+  return { start, end, paragraph: text.slice(start, end).trim() };
+}
+
+async function reparaSelection() {
+  if (processing) return;
+
+  const sel = getSelectedParagraph();
+  if (!sel) {
+    showToast('✂️ Selecciona primero el párrafo que quieres re-parafrasear.', 'info');
+    return;
+  }
+  if (sel.paragraph.length < 15) {
+    showToast('Selecciona un párrafo más largo.', 'info');
+    return;
+  }
+
+  const model = modelSelect.value;
+  if (!model) { showErr('No hay modelo disponible.'); return; }
+
+  processing = true;
+  reparaBtn.disabled = true;
+  showToast('✂️ Re-parafraseando el párrafo seleccionado...', 'info');
+
+  currentAbort = new AbortController();
+  cancelRequested = false;
+
+  try {
+    const opts = {
+      tone: toneSelect.value,
+      intensity: parseInt(intensitySlider.value, 10),
+      preserve: getPreserve(),
+      model,
+      humanize: chipHumanize.classList.contains('active'),
+      audience: audienceSelect.value,
+      length: 'igual',
+      form: formSelect.value
+    };
+
+    const { protectedText, items } = opts.preserve.includes('quotes')
+      ? protectQuotations(sel.paragraph)
+      : { protectedText: sel.paragraph, items: [] };
+
+    const response = await fetchWithTimeout('/api/paraphrase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: protectedText, ...opts })
+    }, 55000, 1);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Error HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.paraphrased) throw new Error('Respuesta vacía del servidor');
+
+    if (data.quota && typeof data.quota.remainingRequests === 'number') {
+      updateQuotaDisplay(data.quota.remainingRequests);
+    }
+
+    const replaced = items.length ? restoreQuotations(data.paraphrased, items) : data.paraphrased;
+
+    // Reemplazar el párrafo en el texto completo
+    const fullText = outputTextarea.value;
+    const newText = fullText.slice(0, sel.start) + replaced + fullText.slice(sel.end);
+    outputTextarea.value = newText;
+
+    // Actualizar estadísticas de la versión actual
+    if (versions[currentVersionIdx]) {
+      const updated = computeStats(newText, lastOriginalText, model);
+      updated.text = newText;
+      versions[currentVersionIdx] = updated;
+      applyVersionStats(updated);
+    }
+
+    showToast('✂️ Párrafo re-parafraseado correctamente.');
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      showErr('Error al re-parafrasear: ' + (err.message || err));
+    }
+  } finally {
+    processing = false;
+    reparaBtn.disabled = false;
+  }
+}
+
 // ─── Comparación lado a lado ──────────────────────────────────────────────────
 function toggleCompare() {
   if (!lastOriginalText) {
@@ -839,7 +1040,7 @@ function toggleCompare() {
   if (active) originalTextarea.value = lastOriginalText;
 }
 
-// ─── Historial (clicable) ─────────────────────────────────────────────────────
+// ─── Historial ────────────────────────────────────────────────────────────────
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem('parafrase_history') || '[]');
@@ -853,7 +1054,6 @@ function saveToHistory(entry) {
     if (history.length > 10) history.pop();
     localStorage.setItem('parafrase_history', JSON.stringify(history));
   } catch (e) {
-    // Cuota llena: elimina los más antiguos y reintenta una vez
     try {
       const history = getHistory().slice(0, 3);
       history.unshift(entry);
@@ -890,7 +1090,7 @@ function renderHistory() {
 function loadHistoryItem(idx) {
   const history = getHistory();
   const h = history[idx];
-  if (!h || !h.text) { showToast('Esa entrada del historial no tiene texto guardado.', 'error'); return; }
+  if (!h || !h.text) { showToast('Esa entrada no tiene texto guardado.', 'error'); return; }
 
   lastOriginalText = h.original || '';
   originalTextarea.value = lastOriginalText;
@@ -903,6 +1103,8 @@ function loadHistoryItem(idx) {
   statSimilarity.innerText = (h.similarity ?? 0) + '%';
   statNaturalness.innerText = (h.naturalness ?? 0) + '%';
   statReadtime.innerText   = Math.max(1, Math.ceil((h.newWords || 0) / 200)) + ' min';
+  statReadability.innerText = '—';
+  readabilityLabelEl.innerText = 'Legibilidad';
   similarityAlert.hidden   = (h.similarity ?? 0) <= 85;
   if (!similarityAlert.hidden) similarityAlertVal.innerText = h.similarity;
 
@@ -981,7 +1183,7 @@ async function downloadAsDocx() {
   }
 }
 
-// ─── Exportar PDF (vía ventana de impresión) ─────────────────────────────────
+// ─── Exportar PDF ─────────────────────────────────────────────────────────────
 function downloadAsPdf() {
   const text = outputTextarea.value;
   if (!text) { showErr('No hay texto para exportar.'); return; }

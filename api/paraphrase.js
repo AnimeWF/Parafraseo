@@ -2,10 +2,8 @@
 //  ParafraseAI · API Serverless (Vercel)
 //  Endpoint: /api/paraphrase
 //
-//  GET  → Diagnóstico: valida la clave y lista los modelos disponibles
-//  POST → Parafrasea con opciones avanzadas:
-//         · humanize (anti-IA con lista negra de frases)
-//         · audience (público objetivo) · length (longitud) · form (tratamiento)
+//  Fase 4: protección de citas (marcadores ⟦Q⟧), auto-humanizar (boostHumanize)
+//  y retorno de cuota restante de Groq.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TONES = {
@@ -24,7 +22,8 @@ const INTENSITY_TEXT = {
 const PRESERVE_RULES = {
   titles: '- NO modifiques los títulos, encabezados ni líneas que empiecen con # o estén en MAYÚSCULAS CORTAS. Cópialos exactamente igual.\n',
   numbers: '- Preserva todos los números, fechas, porcentajes y datos exactos sin cambiarlos.\n',
-  technical: '- Mantén los términos técnicos, siglas y nombres propios sin usar sinónimos.\n'
+  technical: '- Mantén los términos técnicos, siglas y nombres propios sin usar sinónimos.\n',
+  quotes: '- NO modifiques el texto entre comillas ("...", “…”, «...») ni las citas/referencias bibliográficas tipo (Apellido, año). Cópialos EXACTAMENTE como aparecen.\n'
 };
 
 const AUDIENCES = {
@@ -45,7 +44,6 @@ const FORMS = {
   impersonal: 'Redacta en forma impersonal (ej.: "se observa", "se considera", "se puede afirmar").'
 };
 
-// Lista negra de expresiones típicas de IA
 const BANNED_PHRASES = [
   'en conclusión', 'cabe destacar', 'cabe señalar', 'es importante mencionar',
   'es importante destacar', 'en la actualidad', 'sin duda', 'en este sentido',
@@ -77,24 +75,35 @@ function buildPrompt(text, opts) {
     if (PRESERVE_RULES[key]) preserveRules += PRESERVE_RULES[key];
   }
 
-  // Modo humanizar: ritmo natural + lista negra de frases IA
+  // Si el texto contiene marcadores de citas protegidas, exige conservarlos
+  if (text.includes('⟦')) {
+    rules += `${n++}. MUY IMPORTANTE: conserva EXACTAMENTE y sin modificar cualquier marcador entre ⟦ y ⟧ (por ejemplo ⟦Q1⟧, ⟦Q2⟧). Son citas protegidas que se restaurarán después; no las traduzcas, reordenes ni elimines.\n`;
+  }
+
+  // Modo humanizar (normal o reforzado)
+  const humanizeOn = opts.humanize || opts.boostHumanize;
   let humanizeRules = '';
-  if (opts.humanize) {
+  if (humanizeOn) {
     humanizeRules = `
 REGLAS DE HUMANIZACIÓN (OBLIGATORIAS):
 - Varía la longitud de las oraciones: alterna frases cortas y directas con otras más largas. El ritmo debe sentirse natural e irregular, como escrito por una persona.
 - PROHIBIDO usar estas expresiones típicas de IA: ${BANNED_PHRASES.map(p => `"${p}"`).join(', ')}.
-- No empieces oraciones consecutivas con la misma palabra ni uses el mismo conector varias veces.
+- No empieces oraciones consecutivas con la misma palabra ni repitas el mismo conector.
 - Escribe en prosa fluida; evita listas y estructuras repetitivas.
 - Prefiere construcciones sencillas y directas antes que subordinadas largas.`;
+
+    if (opts.boostHumanize) {
+      humanizeRules += `
+- REFUERZO EXTRA: esta es una segunda pasada de humanización. Sé aún más natural: usa giros coloquiales suaves, evita cualquier patrón formulaico y haz que el texto suene completamente humano, como si lo hubiera escrito un estudiante real.`;
+    }
   }
 
-  return `Eres un parafraseador profesional en español con amplia experiencia en reescritura de textos. Tu tarea es reescribir ÚNICAMENTE los párrafos de contenido, respetando siempre los títulos.
+  return `Eres un parafraseador profesional en español con amplia experiencia en reescritura de textos. Tu tarea es reescribir ÚNICAMENTE los párrafos de contenido, respetando siempre los títulos y las citas protegidas.
 
 REGLAS OBLIGATORIAS:
 ${rules}${preserveRules}${n++}. NO añadas comentarios, explicaciones, introducciones ni prefijos como "Aquí el texto:" o "Paráfrasis:".
 ${n++}. Devuelve SOLO el texto reescrito, manteniendo la misma estructura de líneas y párrafos.
-${n++}. Los títulos y encabezados deben aparecer idénticos al original.
+${n++}. Los títulos, encabezados y citas protegidas deben aparecer idénticos al original.
 ${n++}. Mantén la coherencia y cohesión entre párrafos.${humanizeRules}
 
 TEXTO A PARAFRASEAR:
@@ -150,7 +159,7 @@ export default async function handler(req, res) {
 
   // ── POST: Parafrasear ───────────────────────────────────────────────────
   const body = req.body || {};
-  const { text, tone, intensity, preserve, model, humanize, audience, length, form } = body;
+  const { text, tone, intensity, preserve, model, humanize, boostHumanize, audience, length, form } = body;
 
   if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Falta el texto o está vacío.' });
@@ -159,7 +168,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'El texto es demasiado largo (máx. 11000 caracteres por segmento).' });
   }
 
-  // Sanitizar y validar todas las opciones
   const modelName = typeof model === 'string' && /^[a-zA-Z0-9._\/-]{1,80}$/.test(model)
     ? model
     : 'openai/gpt-oss-20b';
@@ -169,12 +177,12 @@ export default async function handler(req, res) {
     intensity: [1, 2, 3].includes(Number(intensity)) ? Number(intensity) : 2,
     preserve: Array.isArray(preserve) ? preserve.filter(k => PRESERVE_RULES[k]) : ['titles', 'numbers'],
     humanize: Boolean(humanize),
+    boostHumanize: Boolean(boostHumanize),
     audience: AUDIENCES[audience] ? audience : null,
     length: LENGTHS[length] ? length : null,
     form: FORMS[form] ? form : null
   };
 
-  // Los modelos GPT-OSS fueron entrenados con temperature 1.0 / top_p 1.0
   const isGptOss  = modelName.startsWith('openai/gpt-oss');
   const tempValue = isGptOss ? 1.0 : [0.3, 0.7, 1.0][opts.intensity - 1];
   const topPValue = isGptOss ? 1.0 : 0.9;
@@ -191,7 +199,7 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'User-Agent': 'ParafraseAI/5.0'
+        'User-Agent': 'ParafraseAI/6.0'
       },
       body: JSON.stringify({
         model: modelName,
@@ -237,11 +245,18 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: 'La API devolvió una respuesta vacía.' });
     }
 
+    // ── Cuota restante (headers de rate limit de Groq) ───────────────────
+    const remainingReqs = response.headers.get('x-ratelimit-remaining-requests');
+    const quota = remainingReqs !== null && !isNaN(parseInt(remainingReqs, 10))
+      ? { remainingRequests: parseInt(remainingReqs, 10) }
+      : null;
+
     return res.status(200).json({
       paraphrased: paraphrased.trim(),
       model: modelName,
       truncated: choice?.finish_reason === 'length',
-      usage: data?.usage || null
+      usage: data?.usage || null,
+      quota
     });
 
   } catch (error) {
